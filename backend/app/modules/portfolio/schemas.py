@@ -1,15 +1,15 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, field_serializer, ConfigDict
 from datetime import datetime
 from decimal import Decimal
 
 
 class PortfolioCreate(BaseModel):
     name: str
-    initial_cash: Decimal
+    initial_cash: float
 
     @field_validator("initial_cash")
     @classmethod
-    def positive_cash(cls, v: Decimal) -> Decimal:
+    def positive_cash(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("Initial cash must be positive")
         return v
@@ -19,27 +19,35 @@ class PortfolioResponse(BaseModel):
     id: int
     user_id: int
     name: str
-    initial_cash: Decimal
-    cash_balance: Decimal
+    initial_cash: float
+    cash_balance: float
     is_paper: bool
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    @field_serializer("initial_cash", "cash_balance")
+    def serialize_dec(self, v: Decimal) -> float:
+        return round(float(v), 2)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HoldingResponse(BaseModel):
     id: int
     symbol: str
     quantity: int
-    average_price: Decimal
-    current_price: Decimal | None = None
-    cost_basis: Decimal | None = None
-    market_value: Decimal | None = None
-    unrealised_pnl: Decimal | None = None
-    unrealised_pnl_pct: Decimal | None = None
+    average_price: float
+    current_price: float | None = None
+    cost_basis: float | None = None
+    market_value: float | None = None
+    unrealised_pnl: float | None = None
+    unrealised_pnl_pct: float | None = None
 
-    model_config = {"from_attributes": True}
+    @field_serializer("average_price", "current_price", "cost_basis", "market_value", "unrealised_pnl", "unrealised_pnl_pct")
+    def serialize_dec(self, v: Decimal | None) -> float | None:
+        return round(float(v), 2) if v is not None else None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TransactionResponse(BaseModel):
@@ -47,17 +55,21 @@ class TransactionResponse(BaseModel):
     symbol: str
     side: str
     quantity: int
-    price: Decimal
-    total_value: Decimal
+    price: float
+    total_value: float
     executed_at: datetime
 
-    model_config = {"from_attributes": True}
+    @field_serializer("price", "total_value")
+    def serialize_dec(self, v: Decimal) -> float:
+        return round(float(v), 2)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TradeRequest(BaseModel):
     symbol: str
     quantity: int
-    price: Decimal
+    price: float
 
     @field_validator("quantity")
     @classmethod
@@ -68,7 +80,7 @@ class TradeRequest(BaseModel):
 
     @field_validator("price")
     @classmethod
-    def positive_price(cls, v: Decimal) -> Decimal:
+    def positive_price(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("Price must be positive")
         return v
@@ -76,11 +88,11 @@ class TradeRequest(BaseModel):
 
 class PortfolioSummary(BaseModel):
     portfolio: PortfolioResponse
-    cash_balance: Decimal
-    invested_cost: Decimal
-    market_value: Decimal
-    equity: Decimal
-    unrealised_pnl: Decimal
-    unrealised_pnl_pct: Decimal
+    cash_balance: float
+    invested_cost: float
+    market_value: float
+    equity: float
+    unrealised_pnl: float
+    unrealised_pnl_pct: float
     holdings: list[HoldingResponse]
     recent_transactions: list[TransactionResponse]

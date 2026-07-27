@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from decimal import Decimal
 from app.modules.backtest.engine import BacktestResult, TradeSide
 from app.modules.market_data.provider import OHLCVBar
@@ -11,8 +10,8 @@ def run_backtest(
     bars: list[OHLCVBar],
     initial_capital: float = 100000.0,
     position_size_pct: float = 0.2,
-    commission: float = 0.0,
-    slippage: float = 0.001,
+    commission_pct: float = 0.0,
+    slippage_pct: float = 0.001,
 ) -> BacktestResult:
     if len(bars) < 50:
         return BacktestResult(
@@ -25,9 +24,10 @@ def run_backtest(
 
     cash = initial_capital
     shares = 0
+    entry_price = 0.0
     equity_curve: list[dict] = []
     trades: list[dict] = []
-    prev_signal_direction = SignalDirection.HOLD
+    position = False
 
     closes = [b.close for b in bars]
     highs = [b.high for b in bars]
@@ -46,27 +46,44 @@ def run_backtest(
         macd_l = indicators.get("macd_line")
         macd_s = indicators.get("macd_signal")
         sma_20 = indicators.get("sma_20")
-        sma_50 = indicators.get("sma_50")
         latest_close = indicators.get("latest_close")
-
-        direction = SignalDirection.HOLD
-        if rsi_val is not None and macd_l is not None and macd_s is not None:
-            if rsi_val < 30 and macd_l > macd_s:
-                direction = SignalDirection.BUY
-            elif rsi_val > 70 and macd_l < macd_s:
-                direction = SignalDirection.SELL
 
         bar = bars[i]
         price = float(bar.close)
-        entry_price = price * (1 + slippage)
 
-        if direction == SignalDirection.BUY and prev_signal_direction != SignalDirection.BUY and cash > 0:
+        direction = SignalDirection.HOLD
+        buy_signal = False
+        sell_signal = False
+
+        if rsi_val is not None and macd_l is not None and macd_s is not None:
+            # BUY: momentum improving (MACD crossing positive OR rising), RSI not overbought
+            if macd_l > macd_s and rsi_val < 55:
+                buy_signal = True
+            # SELL: momentum weakening (MACD crossing negative OR falling), RSI not oversold
+            elif macd_l < macd_s and rsi_val > 50:
+                sell_signal = True
+
+            # Secondary condition: price crosses SMA 20
+            if sma_20 is not None and latest_close is not None:
+                if latest_close > sma_20 and macd_l > macd_s:
+                    buy_signal = True
+                elif latest_close < sma_20 and macd_l < macd_s:
+                    sell_signal = True
+
+        # Compute slippaged price for execution
+        slippage_factor = slippage_pct
+        comm_factor = commission_pct / 100.0 if commission_pct > 1 else commission_pct
+
+        if buy_signal and not position and cash > 0:
+            ep = price * (1 + slippage_factor)
             amount = cash * position_size_pct
-            qty = int(amount / entry_price)
-            cost = qty * entry_price * (1 + commission / 100)
+            qty = int(amount / ep)
+            cost = qty * ep * (1 + comm_factor)
             if qty > 0 and cost <= cash:
                 cash -= cost
-                shares += qty
+                shares = qty
+                entry_price = price
+                position = True
                 trades.append({
                     "timestamp": bar.timestamp.isoformat(),
                     "side": "BUY",
@@ -75,10 +92,9 @@ def run_backtest(
                     "cost": round(cost, 2),
                 })
 
-        elif direction == SignalDirection.SELL and shares > 0:
-            exit_price = price * (1 - slippage)
-            proceeds = shares * exit_price * (1 - commission / 100)
-            profit = proceeds - 0
+        elif sell_signal and position and shares > 0:
+            xp = price * (1 - slippage_factor)
+            proceeds = shares * xp * (1 - comm_factor)
             trades.append({
                 "timestamp": bar.timestamp.isoformat(),
                 "side": "SELL",
@@ -88,14 +104,14 @@ def run_backtest(
             })
             cash += proceeds
             shares = 0
+            position = False
+            entry_price = 0.0
 
-        prev_signal_direction = direction
-
-        equity = cash + shares * float(bar.close)
+        equity = cash + shares * price
         equity_curve.append({
             "timestamp": bar.timestamp.isoformat(),
             "equity": round(equity, 2),
-            "price": float(bar.close),
+            "price": price,
         })
 
     if shares > 0:
@@ -114,19 +130,22 @@ def run_backtest(
     total_return = final_equity - initial_capital
     total_return_pct = (total_return / initial_capital) * 100
 
-    winning = sum(1 for t in trades if t.get("side") == "SELL" and t.get("proceeds", 0) > 0)
-    losing = sum(1 for t in trades if t.get("side") == "SELL" and t.get("proceeds", 0) <= 0)
-    win_rate = winning / max(winning + losing, 1)
+    sell_trades = [t for t in trades if t.get("side") == "SELL"]
+    winning = sum(1 for t in sell_trades if t.get("proceeds", 0) > 0)
+    losing = sum(1 for t in sell_trades if t.get("proceeds", 0) <= 0)
+    win_rate = winning / max(len(sell_trades), 1)
 
-    gross_profit = sum(t.get("proceeds", 0) for t in trades if t.get("side") == "SELL" and t.get("proceeds", 0) > 0)
-    gross_loss = abs(sum(t.get("proceeds", 0) for t in trades if t.get("side") == "SELL" and t.get("proceeds", 0) < 0))
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
+    gross_profit = sum(t.get("proceeds", 0) for t in sell_trades if t.get("proceeds", 0) > 0)
+    gross_loss = abs(sum(t.get("proceeds", 0) for t in sell_trades if t.get("proceeds", 0) < 0))
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
+    if profit_factor == float('inf'):
+        profit_factor = 999.99
 
     from app.modules.backtest.engine import _sharpe_ratio, _sortino_ratio
-    sharpe = _sharpe_ratio(returns_series) if returns_series else None
-    sortino = _sortino_ratio(returns_series) if returns_series else None
+    sharpe = _sharpe_ratio(returns_series) if len(returns_series) >= 2 else None
+    sortino = _sortino_ratio(returns_series) if len(returns_series) >= 2 else None
 
-    peak = equity_values[0]
+    peak = equity_values[0] if equity_values else initial_capital
     max_dd = 0.0
     for v in equity_values:
         if v > peak:

@@ -25,11 +25,11 @@ router = APIRouter(prefix="/portfolio", tags=["Portfolio"])
 def _enrich_holding(holding: Holding, db: Session) -> HoldingResponse:
     provider = resolve_market_provider(db)
     quote = provider.get_quote(holding.symbol)
-    current_price = quote.last_price if quote else Decimal("0")
-    cost_basis = holding.average_price * holding.quantity
-    market_value = current_price * holding.quantity
+    current_price = float(quote.last_price) if quote else 0.0
+    cost_basis = float(holding.average_price) * float(holding.quantity)
+    market_value = current_price * float(holding.quantity)
     unrealised_pnl = market_value - cost_basis
-    unrealised_pnl_pct = (unrealised_pnl / cost_basis * 100) if cost_basis > 0 else Decimal("0")
+    unrealised_pnl_pct = (unrealised_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
 
     return HoldingResponse(
         id=holding.id,
@@ -84,11 +84,11 @@ def get_portfolio(
 
     holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio_id).all()
     enriched = [_enrich_holding(h, db) for h in holdings]
-    market_value = sum((h.market_value or Decimal("0")) for h in enriched)
-    invested_cost = sum((h.cost_basis or Decimal("0")) for h in enriched)
+    market_value = sum((h.market_value or 0.0) for h in enriched)
+    invested_cost = sum((h.cost_basis or 0.0) for h in enriched)
     unrealised_pnl = market_value - invested_cost
-    unrealised_pnl_pct = (unrealised_pnl / invested_cost * 100) if invested_cost > 0 else Decimal("0")
-    equity = portfolio.cash_balance + market_value
+    unrealised_pnl_pct = (unrealised_pnl / invested_cost * 100) if invested_cost > 0 else 0.0
+    equity = float(portfolio.cash_balance) + market_value
 
     transactions = (
         db.query(Transaction)
@@ -151,7 +151,7 @@ def buy(
     if not quote:
         raise HTTPException(status_code=404, detail=f"Instrument {payload.symbol} not found")
 
-    total_value = payload.price * payload.quantity
+    total_value = Decimal(str(payload.price * payload.quantity))
 
     if portfolio.cash_balance < total_value:
         raise HTTPException(status_code=400, detail="Insufficient cash balance")
@@ -222,7 +222,7 @@ def sell(
     if not holding or holding.quantity < payload.quantity:
         raise HTTPException(status_code=400, detail="Insufficient holdings to sell")
 
-    total_value = payload.price * payload.quantity
+    total_value = Decimal(str(payload.price * payload.quantity))
 
     holding.quantity -= payload.quantity
 

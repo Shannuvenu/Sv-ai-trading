@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer, ConfigDict
 from datetime import datetime
 from decimal import Decimal
 
@@ -13,7 +13,7 @@ class InstrumentResponse(BaseModel):
     currency: str
     is_active: bool
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuoteResponse(BaseModel):
@@ -30,6 +30,10 @@ class QuoteResponse(BaseModel):
     volume: int
     timestamp: datetime
 
+    @field_serializer("last_price", "change", "change_pct", "open", "high", "low", "close")
+    def serialize_dec(self, v: Decimal) -> float:
+        return round(float(v), 2)
+
 
 class OHLCVPoint(BaseModel):
     timestamp: datetime
@@ -38,6 +42,10 @@ class OHLCVPoint(BaseModel):
     low: Decimal
     close: Decimal
     volume: int
+
+    @field_serializer("open", "high", "low", "close")
+    def serialize_dec(self, v: Decimal) -> float:
+        return round(float(v), 2)
 
 
 class HistoryResponse(BaseModel):
@@ -53,4 +61,4 @@ class SearchResult(BaseModel):
     sector: str | None
     instrument_type: str
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)

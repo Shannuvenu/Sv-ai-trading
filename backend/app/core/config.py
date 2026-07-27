@@ -1,5 +1,20 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from decimal import Decimal
+import json
+
+
+def _decimal_to_float(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError
+
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
 
 
 class Settings(BaseSettings):
@@ -18,8 +33,18 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # Market data provider
+    MARKET_DATA_PROVIDER: str = "simulated"  # "simulated" | "upstox"
+
+    # Upstox API
+    UPSTOX_ACCESS_TOKEN: str = ""
+    UPSTOX_CLIENT_ID: str = ""
+    UPSTOX_CLIENT_SECRET: str = ""
+    UPSTOX_REDIRECT_URI: str = "http://localhost:8000/upstox/callback"
+
     class Config:
         env_file = ".env"
+        json_encoders = {Decimal: lambda v: float(v)}
 
 
 @lru_cache()

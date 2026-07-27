@@ -1,10 +1,13 @@
 import time
+import asyncio
+import threading
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.database import Base, engine, SessionLocal
 from app.modules.users.routes import router as users_router
 from app.modules.market_data.routes import router as market_router
+from app.modules.market_data.ws_routes import router as market_ws_router
 from app.modules.watchlist.routes import router as watchlist_router
 from app.modules.portfolio.routes import router as portfolio_router
 from app.modules.technical_analysis.routes import router as analysis_router
@@ -27,12 +30,24 @@ app.add_middleware(
 
 app.include_router(users_router)
 app.include_router(market_router)
+app.include_router(market_ws_router)
 app.include_router(watchlist_router)
 app.include_router(portfolio_router)
 app.include_router(analysis_router)
 app.include_router(backtest_router)
 app.include_router(risk_router)
 app.include_router(alerts_router)
+
+
+def _start_upstox_ws():
+    if settings.MARKET_DATA_PROVIDER != "upstox":
+        return
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    from app.modules.market_data.upstox_provider import get_upstox_provider
+    provider = get_upstox_provider()
+    if provider and provider._configured:
+        loop.run_until_complete(provider.poll_loop())
 
 
 @app.on_event("startup")
@@ -56,6 +71,12 @@ def startup():
             time.sleep(2)
             engine.dispose()
 
+    # Start Upstox WebSocket feeder in background thread
+    if settings.MARKET_DATA_PROVIDER == "upstox":
+        t = threading.Thread(target=_start_upstox_ws, daemon=True)
+        t.start()
+        print("Upstox WebSocket feeder started in background.")
+
 
 @app.get("/")
 def root():
@@ -64,4 +85,10 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    provider_type = settings.MARKET_DATA_PROVIDER
+    provider_status = "configured" if settings.UPSTOX_ACCESS_TOKEN else "not_configured"
+    return {
+        "status": "healthy",
+        "market_data_provider": provider_type,
+        "upstox": provider_status,
+    }

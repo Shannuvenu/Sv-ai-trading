@@ -33,7 +33,7 @@ def execute_backtest(
         bars=bars,
         initial_capital=payload.initial_capital,
         position_size_pct=payload.position_size_pct,
-        commission=payload.commission,
-        slippage=payload.slippage,
+        commission_pct=payload.commission,
+        slippage_pct=payload.slippage,
     )
     return result.to_dict()
