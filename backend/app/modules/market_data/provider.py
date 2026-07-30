@@ -18,6 +18,8 @@ class Quote:
     close: Decimal
     volume: int
     timestamp: datetime
+    data_source: str = "CACHED"  # "LIVE" | "CACHED" | "SIMULATED"
+    market_status: str = "CLOSED"  # "OPEN" | "CLOSED"
 
 
 @dataclass

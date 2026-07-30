@@ -71,11 +71,11 @@ def startup():
             time.sleep(2)
             engine.dispose()
 
-    # Start Upstox WebSocket feeder in background thread
-    if settings.MARKET_DATA_PROVIDER == "upstox":
-        t = threading.Thread(target=_start_upstox_ws, daemon=True)
-        t.start()
-        print("Upstox WebSocket feeder started in background.")
+    # Upstox polling disabled - use on-demand quotes only
+    # if settings.MARKET_DATA_PROVIDER == "upstox":
+    #     t = threading.Thread(target=_start_upstox_ws, daemon=True)
+    #     t.start()
+    #     print("Upstox WebSocket feeder started in background.")
 
 
 @app.get("/")

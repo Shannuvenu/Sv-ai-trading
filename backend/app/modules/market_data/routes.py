@@ -7,24 +7,17 @@ from app.modules.market_data.schemas import (
     HistoryResponse,
     SearchResult,
 )
-from app.modules.market_data.db_provider import DatabaseMarketDataProvider
-from app.modules.market_data.mock_provider import get_market_data_provider, MockMarketDataProvider
+from app.modules.market_data.utils import resolve_market_provider
 
 
 def get_provider(db: Session = Depends(get_db)):
-    provider = DatabaseMarketDataProvider(db)
-    instruments = provider.get_all_instruments()
-    if not instruments:
-        return get_market_data_provider()
-    return provider
+    return resolve_market_provider(db)
 
 
 router = APIRouter(prefix="/market", tags=["Market Data"])
 
 
 def _get_all_instruments(provider):
-    if isinstance(provider, MockMarketDataProvider):
-        return provider.get_all_instruments()
     return provider.get_all_instruments()
 
 
@@ -109,6 +102,8 @@ def get_quote(symbol: str, provider=Depends(get_provider)):
         close=quote.close,
         volume=quote.volume,
         timestamp=quote.timestamp,
+        data_source=getattr(quote, "data_source", "CACHED"),
+        market_status=getattr(quote, "market_status", "CLOSED"),
     )
 
 

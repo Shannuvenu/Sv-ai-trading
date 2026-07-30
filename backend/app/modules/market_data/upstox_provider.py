@@ -78,40 +78,54 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         if not instrument_key:
             return None
 
-        try:
-            url = f"{QUOTE_URL}?instrument_key={instrument_key.replace('|','%7C')}"
-            resp = self._http.get(url, headers=self._headers())
-            if resp.status_code != 200:
-                logger.error(f"Quote HTTP {resp.status_code} for {symbol}")
-                return None
-            data = resp.json()
-            entry = data.get("data", {}).get(instrument_key)
-            if not entry:
-                return None
+        for attempt in range(3):
+            try:
+                url = f"{QUOTE_URL}?instrument_key={instrument_key.replace('|','%7C')}"
+                resp = self._http.get(url, headers=self._headers())
+                if resp.status_code == 429:
+                    wait = 2 ** attempt
+                    logger.warning(f"Quote 429 for {symbol}, retry {attempt+1} in {wait}s")
+                    time.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    logger.error(f"Quote HTTP {resp.status_code} for {symbol}")
+                    return None
+                data = resp.json()
+                data_map = data.get("data", {})
+                entry = None
+                if instrument_key in data_map:
+                    entry = data_map[instrument_key]
+                else:
+                    alt_key = f"NSE_EQ:{symbol}"
+                    entry = data_map.get(alt_key)
+                if not entry:
+                    logger.error(f"Quote: key not found in response for {symbol}")
+                    return None
 
-            last_price = float(entry.get("last_price", 0))
-            ohlc = entry.get("ohlc", {})
-            prev_close = float(ohlc.get("close", last_price))
-            change = last_price - prev_close
-            change_pct = (change / prev_close * 100) if prev_close > 0 else 0.0
-            ts_str = entry.get("timestamp", "")
-            ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
+                last_price = float(entry.get("last_price", 0))
+                ohlc = entry.get("ohlc", {})
+                prev_close = float(ohlc.get("close", last_price))
+                change = last_price - prev_close
+                change_pct = (change / prev_close * 100) if prev_close > 0 else 0.0
+                ts_str = entry.get("timestamp", "")
+                ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
 
-            return Quote(
-                symbol=symbol, name=info.name, exchange=info.exchange,
-                last_price=Decimal(str(last_price)),
-                change=Decimal(str(round(change, 2))),
-                change_pct=Decimal(str(round(change_pct, 2))),
-                open=Decimal(str(float(ohlc.get("open", 0)))),
-                high=Decimal(str(float(ohlc.get("high", 0)))),
-                low=Decimal(str(float(ohlc.get("low", 0)))),
-                close=Decimal(str(last_price)),
-                volume=int(entry.get("volume", 0)),
-                timestamp=ts,
-            )
-        except Exception as e:
-            logger.error(f"Quote error {symbol}: {e}")
-            return None
+                return Quote(
+                    symbol=symbol, name=info.name, exchange=info.exchange,
+                    last_price=Decimal(str(last_price)),
+                    change=Decimal(str(round(change, 2))),
+                    change_pct=Decimal(str(round(change_pct, 2))),
+                    open=Decimal(str(float(ohlc.get("open", 0)))),
+                    high=Decimal(str(float(ohlc.get("high", 0)))),
+                    low=Decimal(str(float(ohlc.get("low", 0)))),
+                    close=Decimal(str(last_price)),
+                    volume=int(entry.get("volume", 0)),
+                    timestamp=ts,
+                )
+            except Exception as e:
+                logger.error(f"Quote error {symbol}: {e}")
+                return None
+        return None
 
     def get_history(
         self, symbol: str, start: datetime | None = None, end: datetime | None = None, days: int = 252
@@ -132,8 +146,8 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         from_date = start.strftime("%Y-%m-%d")
 
         try:
-            url = f"{HISTORY_URL}/{instrument_key}/1day/{to_date}/{from_date}"
-            resp = self._http.get(str(url).replace("%7C","|"), headers=self._headers())
+            url = f"{HISTORY_URL}/{instrument_key.replace('|','%7C')}/day/{to_date}/{from_date}"
+            resp = self._http.get(url, headers=self._headers())
             if resp.status_code != 200:
                 logger.error(f"History HTTP {resp.status_code} for {symbol}")
                 return []
