@@ -1,22 +1,40 @@
 "use client";
-import { useState, useEffect } from "react";
-import { TrendingUp, TrendingDown, Play, Square, Pause, Activity, Shield, Zap, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Activity, Zap, Shield, AlertTriangle } from "lucide-react";
+
+interface ScanResult {
+  symbol: string;
+  last_price: number;
+  strategies: Record<string, { direction: string; score: number; reason: string }>;
+  risk?: {
+    entry_price: number;
+    stop_loss: number;
+    take_profit: number;
+    quantity: number;
+    risk_amount: number;
+    capital: number;
+  };
+}
 
 export default function AITraderPage() {
   const [scanSymbol, setScanSymbol] = useState("");
-  const [scanResult, setScanResult] = useState<any>(null);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleScan = async () => {
     if (!scanSymbol) return;
     setScanLoading(true); setError("");
+    const token = localStorage.getItem("access_token");
     try {
-      const resp = await fetch(`/api/ai-trader/scan?symbol=${scanSymbol.toUpperCase()}`);
+      const resp = await fetch(`/api/ai-trader/scan?symbol=${scanSymbol.toUpperCase()}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || "Scan failed");
-      setScanResult(data);
-    } catch (err: unknown) { setError(err instanceof Error ? err.message : "Error"); }
+      if (!resp.ok) throw new Error(data.detail || "Unable to run market scan");
+      setScanResult(data as ScanResult);
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : "Unable to run market scan"); }
     setScanLoading(false);
   };
 
@@ -33,7 +51,6 @@ export default function AITraderPage() {
         </div>
       </div>
 
-      {/* Market Scan */}
       <div className="bg-surface border border-border rounded-xl p-5">
         <h3 className="font-semibold mb-3 flex items-center gap-2"><Zap size={18} />Market Scan</h3>
         <div className="flex gap-2">
@@ -51,11 +68,11 @@ export default function AITraderPage() {
               <span className="tabular-nums text-lg">₹{scanResult.last_price}</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {Object.entries(scanResult.strategies as Record<string, any>).map(([name, s]) => (
+              {Object.entries(scanResult.strategies).map(([name, s]) => (
                 <div key={name} className={`bg-background border rounded-lg p-3 ${s.direction === "BUY" ? "border-success/30" : s.direction === "SELL" ? "border-danger/30" : "border-border"}`}>
                   <p className="text-xs text-muted capitalize">{name.replace(/_/g, " ")}</p>
-                  <p className={`font-bold text-sm ${s.direction==="BUY"?"text-success":s.direction==="SELL"?"text-danger":"text-muted"}`}>{s.direction}</p>
-                  <p className="text-xs text-muted">Score: {(s.score*100).toFixed(0)}%</p>
+                  <p className={`font-bold text-sm ${s.direction === "BUY" ? "text-success" : s.direction === "SELL" ? "text-danger" : "text-muted"}`}>{s.direction}</p>
+                  <p className="text-xs text-muted">Score: {(s.score * 100).toFixed(0)}%</p>
                 </div>
               ))}
             </div>
@@ -72,7 +89,6 @@ export default function AITraderPage() {
         )}
       </div>
 
-      {/* Strategy cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {[
           { name: "Momentum Breakout", key: "momentum", desc: "MACD + RSI + SMA20" },
@@ -80,12 +96,11 @@ export default function AITraderPage() {
           { name: "Trend Following", key: "trend_follow", desc: "SMA20 vs SMA50" },
           { name: "Mean Reversion", key: "mean_reversion", desc: "RSI oversold/overbought" },
           { name: "EMA Crossover", key: "ma_crossover", desc: "EMA20 vs EMA50" },
-          { name: "Volume Surge", key: "volume_surge", desc: "Volume > 1.5x average" },
+          { name: "Volume Surge", key: "volume_surge", desc: "Volume &gt; 1.5x average" },
         ].map((s) => (
           <div key={s.key} className="bg-surface border border-border rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
-              <Shield size={16} className="text-primary" />
-              <h4 className="font-semibold text-sm">{s.name}</h4>
+              <Shield size={16} className="text-primary" /><h4 className="font-semibold text-sm">{s.name}</h4>
             </div>
             <p className="text-xs text-muted mb-2">{s.desc}</p>
             <span className="text-xs px-2 py-0.5 rounded bg-surface-hover text-muted">PAPER · 1D</span>
@@ -93,7 +108,6 @@ export default function AITraderPage() {
         ))}
       </div>
 
-      {/* Risk Info */}
       <div className="bg-surface border border-warning/30 rounded-xl p-5">
         <h3 className="font-semibold mb-2 flex items-center gap-2"><AlertTriangle size={16} className="text-warning" />Risk Controls</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
