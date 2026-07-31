@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, BarChart3, Star, Briefcase, LineChart, CandlestickChart, Bell, LogOut, Menu, X } from "lucide-react";
+import { LayoutDashboard, BarChart3, Star, Briefcase, LineChart, CandlestickChart, Bell, LogOut, Menu, X, Calculator, Bot } from "lucide-react";
 import { useState } from "react";
 
 const navItems = [
@@ -13,7 +13,9 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/analysis", label: "Analysis", icon: CandlestickChart },
   { href: "/backtest", label: "Backtest", icon: LineChart },
+  { href: "/ai-trader", label: "AI Trader", icon: Bot },
   { href: "/alerts", label: "Alerts", icon: Bell },
+  { href: "/tools", label: "Calculators", icon: Calculator },
 ];
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
