@@ -1,10 +1,10 @@
 "use client";
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Search, TrendingUp, TrendingDown, Minus, Star, Bell, ArrowLeft } from "lucide-react";
+import { Search, TrendingUp, TrendingDown, Minus, Star, Bell, ArrowLeft, NewspaperIcon, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { Quote } from "@/types";
+import type { Quote, NewsArticle, NewsListResponse } from "@/types";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 function StockContent() {
@@ -16,19 +16,22 @@ function StockContent() {
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"overview"|"chart"|"technicals">("overview");
+  const [activeTab, setActiveTab] = useState<"overview"|"chart"|"technicals"|"news">("overview");
+  const [newsData, setNewsData] = useState<NewsListResponse | null>(null);
 
   const load = useCallback(async (sym: string) => {
     setLoading(true); setError("");
     try {
-      const [q, h, s] = await Promise.all([
+      const [q, h, s, n] = await Promise.all([
         api.getQuote(sym).catch(() => null),
         api.getHistory(sym).catch(() => ({ data: [] })),
         fetch(`/api/analysis/technical-summary/${sym}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        api.getCompanyNews(sym, 1, 10).catch(() => null),
       ]);
       setQuote(q);
       setHistory(h?.data?.slice(-90) || []);
       setSummary(s);
+      setNewsData(n);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
   }, []);
@@ -66,7 +69,7 @@ function StockContent() {
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-border">
-        {["overview","chart","technicals"].map(t=>(<button key={t} onClick={()=>setActiveTab(t as any)} className={`pb-2 text-sm font-medium capitalize ${activeTab===t?"text-primary border-b-2 border-primary":"text-muted hover:text-foreground"}`}>{t}</button>))}
+        {["overview","chart","technicals","news"].map(t=>(<button key={t} onClick={()=>setActiveTab(t as any)} className={`pb-2 text-sm font-medium capitalize ${activeTab===t?"text-primary border-b-2 border-primary":"text-muted hover:text-foreground"}`}>{t}</button>))}
       </div>
 
       {activeTab==="overview" && summary && (
@@ -96,6 +99,39 @@ function StockContent() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {Object.entries(summary.moving_averages||{}).map(([k,v])=>(<div key={k} className="bg-surface border border-border rounded-xl p-2 text-center"><p className="text-xs text-muted">{k}</p><p className="font-medium tabular-nums text-sm">{v!=null?`₹${Number(v).toFixed(2)}`:"—"}</p></div>))}
           {Object.entries(summary.indicators||{}).map(([k,v])=>(<div key={k} className="bg-surface border border-border rounded-xl p-2 text-center"><p className="text-xs text-muted">{k}</p><p className="font-medium tabular-nums text-sm">{v!=null?Number(v).toFixed(2):"—"}</p></div>))}
+        </div>
+      )}
+
+      {activeTab === "news" && (
+        <div className="space-y-3">
+          {newsData && newsData.items.length > 0 ? (
+            newsData.items.map((article) => (
+              <a key={article.id} href={article.url || "#"} target="_blank" rel="noopener noreferrer"
+                className="block bg-surface border border-border rounded-xl p-4 hover:bg-surface-hover transition-colors group">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      {article.source && <span className="text-xs text-muted">{article.source}</span>}
+                    </div>
+                    <h3 className="font-medium text-sm leading-snug group-hover:text-primary transition-colors">{article.headline}</h3>
+                    {article.summary && <p className="text-xs text-muted mt-1 line-clamp-2">{article.summary}</p>}
+                    <div className="flex items-center gap-3 mt-2">
+                      {article.published_at && <span className="text-xs text-muted">{new Date(article.published_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span>}
+                      <ExternalLink size={12} className="text-muted group-hover:text-primary" />
+                    </div>
+                  </div>
+                  {article.image_url && (
+                    <img src={article.image_url} alt="" className="w-20 h-14 rounded-lg object-cover flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  )}
+                </div>
+              </a>
+            ))
+          ) : (
+            <div className="bg-surface border border-border rounded-xl p-12 text-center">
+              <NewspaperIcon size={40} className="mx-auto text-muted mb-3" />
+              <p className="text-muted">No recent news for this stock.</p>
+            </div>
+          )}
         </div>
       )}
     </div>

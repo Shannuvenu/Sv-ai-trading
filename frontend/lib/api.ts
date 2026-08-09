@@ -1,3 +1,10 @@
+import type {
+  User, Instrument, Quote, OHLCVPoint, Watchlist, WatchlistItem,
+  Portfolio, Transaction, PortfolioSummary,
+  Analysis, BacktestResult, Alert, RiskAnalysis,
+  NewsArticle, NewsListResponse,
+} from "@/types";
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -105,11 +112,11 @@ export const api = {
     request<Alert>("/alerts", { method: "POST", body: JSON.stringify(data) }),
   listAlerts: () => request<Alert[]>("/alerts"),
   deleteAlert: (id: number) => request<void>(`/alerts/${id}`, { method: "DELETE" }),
+
+  getCompanyNews: (symbol: string, page = 1, pageSize = 20) =>
+    request<NewsListResponse>(`/news/company/${symbol}?page=${page}&page_size=${pageSize}`),
+  getMarketNews: (category = "general", page = 1, pageSize = 20) =>
+    request<NewsListResponse>(`/news/market?category=${category}&page=${page}&page_size=${pageSize}`),
+  searchNews: (q: string, page = 1, pageSize = 20) =>
+    request<NewsListResponse>(`/news/search?q=${encodeURIComponent(q)}&page=${page}&page_size=${pageSize}`),
 };
-
-import type {
-  User, Instrument, Quote, OHLCVPoint, Watchlist, WatchlistItem,
-  Portfolio, Transaction, PortfolioSummary,
-  Analysis, BacktestResult, Alert, RiskAnalysis,
-} from "@/types";
-

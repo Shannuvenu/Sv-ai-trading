@@ -10,6 +10,7 @@ from app.modules.market_data.routes import router as market_router
 from app.modules.market_data.ws_routes import router as market_ws_router
 from app.modules.watchlist.routes import router as watchlist_router
 from app.modules.portfolio.routes import router as portfolio_router
+from app.modules.portfolio.analytics_routes import router as portfolio_analytics_router
 from app.modules.technical_analysis.routes import router as analysis_router
 from app.modules.backtest.routes import router as backtest_router
 from app.modules.risk.routes import router as risk_router
@@ -17,6 +18,9 @@ from app.modules.alerts.routes import router as alerts_router
 from app.modules.market_data.index_routes import router as index_router
 from app.modules.calculators.routes import router as calc_router
 from app.modules.ai_trader.routes import router as ai_router
+from app.modules.news.routes import router as news_router
+from app.modules.ai_trader.ai_routes import router as ai_intelligence_router
+from app.modules.market_data.fundamentals_routes import router as fundamentals_router
 from scripts.seed import seed_all
 
 settings = get_settings()
@@ -36,6 +40,7 @@ app.include_router(market_router)
 app.include_router(market_ws_router)
 app.include_router(watchlist_router)
 app.include_router(portfolio_router)
+app.include_router(portfolio_analytics_router)
 app.include_router(analysis_router)
 app.include_router(backtest_router)
 app.include_router(risk_router)
@@ -43,6 +48,9 @@ app.include_router(alerts_router)
 app.include_router(index_router)
 app.include_router(calc_router)
 app.include_router(ai_router)
+app.include_router(news_router)
+app.include_router(ai_intelligence_router)
+app.include_router(fundamentals_router)
 
 
 def _start_upstox_ws():

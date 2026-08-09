@@ -1,7 +1,7 @@
 """AI Trader routes — config, strategies, decisions, paper execution."""
 from decimal import Decimal
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user

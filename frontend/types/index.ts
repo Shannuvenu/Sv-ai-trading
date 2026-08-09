@@ -150,6 +150,25 @@ export interface Alert {
   created_at: string;
 }
 
+export interface NewsArticle {
+  id: number;
+  category: string;
+  symbol: string | null;
+  headline: string;
+  summary: string | null;
+  source: string | null;
+  url: string | null;
+  image_url: string | null;
+  published_at: string | null;
+}
+
+export interface NewsListResponse {
+  items: NewsArticle[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
 export interface RiskAnalysis {
   total_equity: number;
   cash_balance: number;

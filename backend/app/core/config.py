@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     UPSTOX_CLIENT_SECRET: str = ""
     UPSTOX_REDIRECT_URI: str = "http://localhost:8000/upstox/callback"
 
+    # Gemini AI
+    GEMINI_API_KEY: str = ""
+    FINNHUB_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
         json_encoders = {Decimal: lambda v: float(v)}
