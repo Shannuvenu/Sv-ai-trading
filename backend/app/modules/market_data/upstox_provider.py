@@ -18,6 +18,7 @@ from app.modules.market_data.provider import (
 from app.modules.market_data.upstox_instruments import (
     UPSTOX_INSTRUMENTS, SYMBOL_TO_KEY, KEY_TO_SYMBOL,
 )
+from app.modules.market_data.instrument_client import get_instrument_client
 
 settings = get_settings()
 logger = logging.getLogger("upstox_provider")
@@ -37,7 +38,9 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         self._http = httpx.Client(timeout=15.0)
         self._redis: Optional[aioredis.Redis] = None
         self._running = False
+        self._inst_client = get_instrument_client()
 
+        # Fallback to hardcoded list, then enrich from API
         self._instruments_list = [
             InstrumentInfo(
                 symbol=i["symbol"], name=i["name"], exchange=i["exchange"],
@@ -46,6 +49,22 @@ class UpstoxMarketDataProvider(MarketDataProvider):
             for i in UPSTOX_INSTRUMENTS
         ]
         self._symbol_info = {i.symbol: i for i in self._instruments_list}
+        self._dynamic_symbols = dict(SYMBOL_TO_KEY)
+
+    def _resolve_key(self, symbol: str) -> str | None:
+        """Get instrument key from API or fallback."""
+        symbol = symbol.upper()
+        if symbol in self._dynamic_symbols:
+            return self._dynamic_symbols[symbol]
+        # Try fetching from API
+        try:
+            inst = self._inst_client.get_instrument_by_symbol(symbol, "NSE")
+            if inst and inst.get("instrument_key"):
+                self._dynamic_symbols[symbol] = inst["instrument_key"]
+                return inst["instrument_key"]
+        except Exception:
+            pass
+        return SYMBOL_TO_KEY.get(symbol)
 
     async def _ensure_redis(self):
         if self._redis is None:
@@ -74,7 +93,7 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         if not info:
             return None
 
-        instrument_key = SYMBOL_TO_KEY.get(symbol)
+        instrument_key = self._resolve_key(symbol)
         if not instrument_key:
             return None
 
@@ -133,7 +152,7 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         if not self._configured:
             return []
         symbol = symbol.upper()
-        instrument_key = SYMBOL_TO_KEY.get(symbol)
+        instrument_key = self._resolve_key(symbol)
         if not instrument_key:
             return []
 

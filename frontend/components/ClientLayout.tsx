@@ -3,17 +3,18 @@ import { useEffect, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, BarChart3, Star, Briefcase, LineChart, CandlestickChart, Bell, LogOut, Menu, X, Calculator, Bot, Newspaper } from "lucide-react";
+import { LayoutDashboard, BarChart3, Star, Briefcase, LineChart, CandlestickChart, Bell, LogOut, Menu, X, Calculator, Bot, Newspaper, Search, DollarSign, TrendingUp } from "lucide-react";
 import { useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/markets", label: "Markets", icon: BarChart3 },
+  { href: "/screener", label: "Screener", icon: Search },
   { href: "/watchlists", label: "Watchlists", icon: Star },
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/ai-trader", label: "AI Trader", icon: Bot },
   { href: "/analysis", label: "Analysis", icon: CandlestickChart },
   { href: "/backtest", label: "Backtest", icon: LineChart },
-  { href: "/ai-trader", label: "AI Trader", icon: Bot },
   { href: "/news", label: "News", icon: Newspaper },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/tools", label: "Calculators", icon: Calculator },
