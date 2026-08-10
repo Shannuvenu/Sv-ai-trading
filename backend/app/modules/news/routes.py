@@ -1,112 +1,137 @@
+"""
+News routes — MarketAux (primary, free Indian stock news) + Finnhub (fallback, global).
+Requires MARKETAUX_API_KEY in .env — get a free key at https://www.marketaux.com/
+"""
 import logging
-from datetime import datetime, timezone
-import redis as sync_redis
+import time as _time
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
-from app.core.database import get_db
-from app.core.config import get_settings
 from app.core.security import get_current_user
 from app.modules.users.models import User
-from app.modules.news.models import NewsArticle
-from app.modules.news.finnhub_client import get_finnhub_client
-from app.modules.news.schemas import NewsListResponse
+from app.modules.news.marketaux_client import get_marketaux_client
+from app.modules.news.provider import get_news_provider as get_finnhub_provider
 
 router = APIRouter(prefix="/news", tags=["News"])
 logger = logging.getLogger("news_routes")
-settings = get_settings()
+CACHE_TTL = 300
 
-_redis = sync_redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-
-COMPANY_NEWS_TTL = 1800  # 30 min
-MARKET_NEWS_TTL = 900    # 15 min
+cache: dict[str, tuple[list[dict], float]] = {}
 
 
-def _parse_ts(unix_ts):
-    if not unix_ts:
-        return None
-    return datetime.fromtimestamp(unix_ts, tz=timezone.utc)
+def _cached(key: str, ttl: int, fetch_fn):
+    now = _time.time()
+    if key in cache:
+        data, ts = cache[key]
+        if now - ts < ttl:
+            return data
+    data = fetch_fn()
+    cache[key] = (data, now)
+    return data
 
 
-def _upsert_articles(db: Session, raw_items: list[dict], category: str, symbol: str | None):
-    for item in raw_items:
-        fh_id = item.get("id")
-        if fh_id and db.query(NewsArticle).filter(NewsArticle.finnhub_id == fh_id).first():
-            continue
-        db.add(NewsArticle(
-            finnhub_id=fh_id,
-            category=category,
-            symbol=symbol,
-            headline=item.get("headline") or "",
-            summary=item.get("summary"),
-            source=item.get("source"),
-            url=item.get("url"),
-            image_url=item.get("image"),
-            published_at=_parse_ts(item.get("datetime")),
-        ))
-    db.commit()
+def _to_response(articles: list[dict], page: int, page_size: int) -> dict:
+    items = []
+    for a in articles:
+        items.append({
+            "id": hash(a.get("headline", "")),
+            "headline": a.get("headline", ""),
+            "summary": a.get("summary") or "",
+            "source": a.get("source", ""),
+            "url": a.get("url") or "",
+            "image_url": a.get("image_url") or "",
+            "published_at": a.get("published_at"),
+            "sentiment": a.get("sentiment"),
+            "category": a.get("category", ""),
+            "symbol": a.get("symbol"),
+        })
+    start = (page - 1) * page_size
+    return {"items": items[start:start + page_size], "page": page, "page_size": page_size, "total": len(items)}
 
 
-def _refresh_if_stale(db: Session, cache_key: str, ttl: int, fetch_fn, category: str, symbol: str | None = None):
-    if _redis.get(cache_key):
-        return
-    raw = fetch_fn()
-    if raw:
-        _upsert_articles(db, raw, category, symbol)
-    _redis.setex(cache_key, ttl, "1")
+def _get_news(symbol: str, limit: int = 30) -> list[dict]:
+    results = []
+    marketaux = get_marketaux_client()
+    if marketaux.is_configured:
+        try:
+            news = marketaux.get_company_news(symbol, limit=max(limit, 50))
+            for a in news:
+                a["category"] = "company"
+                a["symbol"] = symbol.upper()
+            results = news
+        except Exception as e:
+            logger.error(f"MarketAux failed for {symbol}: {e}")
+    if not results:
+        finnhub = get_finnhub_provider()
+        if finnhub.is_configured:
+            news = finnhub.search_company_news(symbol, days_back=30, limit=limit)
+            for a in news:
+                a["category"] = "company"
+                a["symbol"] = symbol.upper()
+            results = news
+    return results
 
 
-@router.get("/company/{symbol}", response_model=NewsListResponse)
+@router.get("/company/{symbol}")
 def get_company_news(
     symbol: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     symbol = symbol.upper()
-    client = get_finnhub_client()
-    _refresh_if_stale(
-        db, f"news:cache:company:{symbol}", COMPANY_NEWS_TTL,
-        lambda: client.get_company_news(symbol), "company", symbol,
-    )
-    q = db.query(NewsArticle).filter(NewsArticle.symbol == symbol).order_by(NewsArticle.published_at.desc())
-    total = q.count()
-    items = q.offset((page - 1) * page_size).limit(page_size).all()
-    return NewsListResponse(items=items, page=page, page_size=page_size, total=total)
+    articles = _cached(f"news:company:{symbol}", CACHE_TTL, lambda: _get_news(symbol, 50))
+    return _to_response(articles, page, page_size)
 
 
-@router.get("/market", response_model=NewsListResponse)
+@router.get("/market")
 def get_market_news(
-    category: str = Query("general"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    client = get_finnhub_client()
-    _refresh_if_stale(
-        db, f"news:cache:market:{category}", MARKET_NEWS_TTL,
-        lambda: client.get_market_news(category), "market", None,
-    )
-    q = db.query(NewsArticle).filter(NewsArticle.category == "market").order_by(NewsArticle.published_at.desc())
-    total = q.count()
-    items = q.offset((page - 1) * page_size).limit(page_size).all()
-    return NewsListResponse(items=items, page=page, page_size=page_size, total=total)
+    articles = []
+    marketaux = get_marketaux_client()
+    if marketaux.is_configured:
+        articles = _cached("news:market:marketaux", CACHE_TTL, lambda: marketaux.get_market_news(100))
+        for a in articles:
+            a["category"] = "market"
+    if not articles:
+        finnhub = get_finnhub_provider()
+        if finnhub.is_configured:
+            news = finnhub.get_market_news("general")
+            for a in news:
+                a_norm = {
+                    "headline": a.get("headline", ""),
+                    "summary": a.get("summary", ""),
+                    "source": a.get("source", ""),
+                    "url": a.get("url", ""),
+                    "image_url": a.get("image", ""),
+                    "published_at": a.get("datetime"),
+                    "category": "market",
+                }
+                articles.append(a_norm)
+    return _to_response(articles, page, page_size)
 
 
-@router.get("/search", response_model=NewsListResponse)
+@router.get("/search")
 def search_news(
     q: str = Query(..., min_length=2),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    like = f"%{q}%"
-    query = db.query(NewsArticle).filter(
-        or_(NewsArticle.headline.ilike(like), NewsArticle.summary.ilike(like))
-    ).order_by(NewsArticle.published_at.desc())
-    total = query.count()
-    items = query.offset((page - 1) * page_size).limit(page_size).all()
-    return NewsListResponse(items=items, page=page, page_size=page_size, total=total)
+    q = q.strip()
+    articles = _cached(f"news:search:{q[:50]}", CACHE_TTL, lambda: _search_news(q, 50))
+    return _to_response(articles, page, page_size)
+
+
+def _search_news(query: str, limit: int = 50) -> list[dict]:
+    results = []
+    marketaux = get_marketaux_client()
+    if marketaux.is_configured:
+        try:
+            results = marketaux.search_news(query, limit=limit)
+            for a in results:
+                a["category"] = "search"
+        except Exception as e:
+            logger.error(f"MarketAux search failed: {e}")
+    return results

@@ -181,12 +181,18 @@ class UpstoxInstrumentClient:
         return None
 
     def get_symbol_map(self, exchange: str = "NSE") -> dict:
-        """Build symbol -> instrument_key mapping."""
+        """Build symbol -> instrument_key mapping. Filters to correct exchange."""
         equities = self.get_all_equities(exchange)
-        return {
-            i.get("trading_symbol", "").upper(): i.get("instrument_key", "")
-            for i in equities if i.get("trading_symbol")
-        }
+        seg_filter = "nse_eq" if exchange.upper() == "NSE" else "bse_eq"
+        result = {}
+        for i in equities:
+            seg = (i.get("segment") or "").lower()
+            if seg != seg_filter:
+                continue
+            sym = i.get("trading_symbol", "")
+            if sym:
+                result[sym.upper()] = i.get("instrument_key", "")
+        return result
 
     def get_quote_batch(self, symbols: list[str], exchange: str = "NSE") -> dict:
         """Get quotes for multiple symbols."""

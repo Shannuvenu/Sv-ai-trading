@@ -89,13 +89,29 @@ class UpstoxMarketDataProvider(MarketDataProvider):
         if not self._configured:
             return None
         symbol = symbol.upper()
-        info = self._symbol_info.get(symbol)
-        if not info:
-            return None
 
         instrument_key = self._resolve_key(symbol)
         if not instrument_key:
             return None
+
+        # Try getting name from cache or API if not in symbol_info
+        info = self._symbol_info.get(symbol)
+        if not info:
+            try:
+                inst = self._inst_client.get_instrument_by_symbol(symbol, "NSE")
+                if inst:
+                    info = InstrumentInfo(
+                        symbol=inst.get("trading_symbol", symbol),
+                        name=inst.get("name", symbol),
+                        exchange=inst.get("exchange", "NSE"),
+                        sector="", instrument_type="equity", currency="INR", is_active=True,
+                    )
+                    self._symbol_info[symbol] = info
+            except Exception:
+                info = InstrumentInfo(
+                    symbol=symbol, name=symbol, exchange="NSE",
+                    sector="", instrument_type="equity", currency="INR", is_active=True,
+                )
 
         for attempt in range(3):
             try:

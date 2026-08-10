@@ -41,6 +41,7 @@ services:
       UPSTOX_REDIRECT_URI: ${UPSTOX_REDIRECT_URI:-http://localhost:8000/upstox/callback}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      MARKETAUX_API_KEY: ${MARKETAUX_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
