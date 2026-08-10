@@ -21,7 +21,7 @@ export default function ChartPage() {
 
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [quote, setQuote] = useState<QuoteData | null>(null);
-  const [interval, setInterval_] = useState("1D");
+  const [interval, setInterval_] = useState("15m");
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
@@ -53,9 +53,10 @@ export default function ChartPage() {
     setLoading(true); setFetchError(""); setChartReady(false);
     try {
       const h = authHeaders();
+      const fetchDays = ["1D","1W","1M"].includes(intv) ? 365 : 7;
       const [q, c, ind] = await Promise.all([
         fetch(`/api/chart/${sym}/quote`, { headers: h }).then(r => r.ok ? r.json() : null),
-        fetch(`/api/chart/${sym}/candles?interval=${intv}&days=365`, { headers: h }).then(r => r.ok ? r.json() : null),
+        fetch(`/api/chart/${sym}/candles?interval=${intv}&days=${fetchDays}`, { headers: h }).then(r => r.ok ? r.json() : null),
         fetch(`/api/chart/${sym}/indicators?indicators=sma20,ema50,rsi14,macd,volume`, { headers: h }).then(r => r.ok ? r.json() : null),
       ]);
       if (q) setQuote(q);

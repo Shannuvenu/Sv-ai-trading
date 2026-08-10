@@ -1,9 +1,12 @@
-"""Chart API — serves OHLCV data for chart frontend with multi-timeframe support."""
+"""
+Chart API — serves OHLCV data with intelligent timeframe mapping.
+Upstox supports: 1minute, 30minute, day, week, month directly.
+For unsupported intervals, we fetch 1m data and aggregate mathematically.
+"""
 import logging
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from app.core.database import get_db
 from app.core.security import get_current_user
 from app.modules.users.models import User
 from app.modules.market_data.upstox_provider import get_upstox_provider
@@ -12,30 +15,59 @@ from app.modules.market_data.instrument_client import get_instrument_client
 router = APIRouter(prefix="/chart", tags=["Chart Data"])
 logger = logging.getLogger("chart_routes")
 
-# Upstox interval mapping: our interval -> Upstox interval
-INTERVAL_MAP = {
-    "1m": "1minute",
-    "3m": "3minute",
-    "5m": "5minute",
-    "10m": "10minute",
-    "15m": "15minute",
-    "30m": "30minute",
-    "60m": "60minute",
-    "1h": "60minute",
-    "2h": "2hour",
-    "4h": "4hour",
-    "1D": "day",
-    "1W": "week",
-    "1M": "month",
+HISTORY_URL = "https://api.upstox.com/v2/historical-candle"
+
+# Upstox actually supports these directly
+UPSTOX_DIRECT = {"1": "1minute", "30": "30minute", "D": "day", "W": "week", "M": "month"}
+
+# Our UI intervals mapped to aggregation rules (source, multiplier, max_days)
+AGGREGATE_MAP = {
+    "1m":  ("1minute", 1, 7),      # 1m = 1x 1min candle
+    "3m":  ("1minute", 3, 15),     # 3m = aggregate 3x 1min
+    "5m":  ("1minute", 5, 30),     # 5m = aggregate 5x 1min
+    "15m": ("1minute", 15, 60),    # 15m = aggregate 15x 1min
+    "30m": ("30minute", 1, 90),    # 30m = direct
+    "1h":  ("1minute", 60, 90),    # 1h = aggregate 60x 1min
+    "4h":  ("1minute", 240, 120),  # 4h = aggregate 240x 1min
+    "1D":  ("day", 1, 730),        # 1D = direct
+    "1W":  ("week", 1, 1825),      # 1W = direct
+    "1M":  ("month", 1, 7300),     # 1M = direct
 }
 
-HISTORY_URL = "https://api.upstox.com/v2/historical-candle"
+def _aggregate_candles(bars: list[dict], multiplier: int) -> list[dict]:
+    """Aggregate 1-minute candles into N-minute OHLCV candles. Open=first, High=max, Low=min, Close=last, Volume=sum."""
+    if multiplier <= 1:
+        return bars
+    result = []
+    bucket = []
+    for bar in bars:
+        bucket.append(bar)
+        if len(bucket) >= multiplier:
+            result.append({
+                "time": bucket[0]["time"],
+                "open": bucket[0]["open"],
+                "high": max(b["high"] for b in bucket),
+                "low": min(b["low"] for b in bucket),
+                "close": bucket[-1]["close"],
+                "volume": sum(b["volume"] for b in bucket),
+            })
+            bucket = []
+    if bucket and len(bucket) > 1:
+        result.append({
+            "time": bucket[0]["time"],
+            "open": bucket[0]["open"],
+            "high": max(b["high"] for b in bucket),
+            "low": min(b["low"] for b in bucket),
+            "close": bucket[-1]["close"],
+            "volume": sum(b["volume"] for b in bucket),
+        })
+    return result
 
 
 @router.get("/{symbol}/candles")
 def get_candles(
     symbol: str,
-    interval: str = Query("1D", description="1m,3m,5m,15m,30m,1h,4h,1D,1W,1M"),
+    interval: str = Query("1D"),
     days: int = Query(365, ge=1, le=730),
     user: User = Depends(get_current_user),
 ):
@@ -53,44 +85,55 @@ def get_candles(
     if not instrument_key:
         raise HTTPException(404, f"Instrument not found: {symbol}")
 
-    upstox_interval = INTERVAL_MAP.get(interval, "day")
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days)
+    mapping = AGGREGATE_MAP.get(interval)
+    if not mapping:
+        mapping = ("day", 1, 365)
+    source_interval, multiplier, max_days = mapping
+    fetch_days = min(days, max_days)
 
     key_encoded = instrument_key.replace("|", "%7C")
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=fetch_days)
     to_date = end.strftime("%Y-%m-%d")
     from_date = start.strftime("%Y-%m-%d")
 
-    url = f"{HISTORY_URL}/{key_encoded}/{upstox_interval}/{to_date}/{from_date}"
-    resp = provider._http.get(url, headers=provider._headers())
+    url = f"{HISTORY_URL}/{key_encoded}/{source_interval}/{to_date}/{from_date}"
+    resp = provider._http.get(url, headers=provider._headers(), timeout=30.0)
+
     if resp.status_code != 200:
-        logger.error(f"Chart history HTTP {resp.status_code} for {symbol} at {interval}")
-        raise HTTPException(502, "Unable to fetch chart data from provider")
+        logger.error(f"Chart HTTP {resp.status_code} for {symbol} interval={interval} mapped={source_interval}")
+        raise HTTPException(502, f"Provider returned {resp.status_code} for interval {interval}")
 
     data = resp.json()
-    candles = data.get("data", {}).get("candles", [])
-    result = []
-    for c in candles:
-        if isinstance(c, list) and len(c) >= 6:
-            ts = c[0]
+    raw_candles = data.get("data", {}).get("candles", [])
+    if not raw_candles:
+        return {"symbol": symbol, "instrument_key": instrument_key, "interval": interval, "candles": [], "total": 0}
+
+    bars = []
+    for c in raw_candles:
+        if isinstance(c, list) and len(c) >= 6 and c[0]:
             try:
-                ts = datetime.strptime(c[0], "%Y-%m-%dT%H:%M:%S%z").isoformat()
+                ts = datetime.strptime(c[0], "%Y-%m-%dT%H:%M:%S%z")
             except Exception:
-                pass
-            result.append({
-                "time": ts,
+                ts = datetime.now(timezone.utc)
+            bars.append({
+                "time": ts.isoformat(),
                 "open": float(c[1]),
                 "high": float(c[2]),
                 "low": float(c[3]),
                 "close": float(c[4]),
                 "volume": int(c[5]),
             })
+
+    bars.sort(key=lambda x: x["time"])
+    aggregated = _aggregate_candles(bars, multiplier) if multiplier > 1 else bars
+
     return {
         "symbol": symbol,
         "instrument_key": instrument_key,
         "interval": interval,
-        "candles": result,
-        "total": len(result),
+        "candles": aggregated,
+        "total": len(aggregated),
     }
 
 
@@ -99,7 +142,6 @@ def get_chart_quote(
     symbol: str,
     user: User = Depends(get_current_user),
 ):
-    """Get real-time quote data for chart header."""
     symbol = symbol.upper()
     provider = get_upstox_provider()
     if not provider or not provider._configured:
@@ -127,10 +169,9 @@ def get_chart_quote(
 @router.get("/{symbol}/indicators")
 def get_indicators(
     symbol: str,
-    indicators: str = Query("sma20,ema50,rsi14,macd,bb,sma50,sma200"),
+    indicators: str = Query("sma20,ema50,rsi14,macd,volume"),
     user: User = Depends(get_current_user),
 ):
-    """Compute technical indicators server-side and return as arrays."""
     symbol = symbol.upper()
     provider = get_upstox_provider()
     if not provider or not provider._configured:
@@ -146,44 +187,36 @@ def get_indicators(
 
     from app.modules.technical_analysis.indicators import sma, ema, rsi as compute_rsi, macd as compute_macd, bollinger_bands, atr as compute_atr
 
-    result_indicators = {}
-    req = set([i.strip().lower() for i in indicators.split(",") if i.strip()])
+    result = {}
+    req = set(i.strip().lower() for i in indicators.split(",") if i.strip())
 
     for ind in req:
         if ind.startswith("sma"):
-            period = int(ind[3:]) if len(ind) > 3 else 20
-            vals = sma(closes, period)
-            result_indicators[f"sma_{period}"] = _format_series(times, vals)
+            p = int(ind[3:]) if len(ind) > 3 else 20
+            result[f"sma_{p}"] = _fmt(times, sma(closes, p))
         elif ind.startswith("ema"):
-            period = int(ind[3:]) if len(ind) > 3 else 50
-            vals = ema(closes, period)
-            result_indicators[f"ema_{period}"] = _format_series(times, vals)
-        elif ind == "rsi14" or ind == "rsi":
-            vals = compute_rsi(closes, 14)
-            result_indicators["rsi_14"] = _format_series(times, vals)
+            p = int(ind[3:]) if len(ind) > 3 else 50
+            result[f"ema_{p}"] = _fmt(times, ema(closes, p))
+        elif ind in ("rsi14", "rsi"):
+            result["rsi_14"] = _fmt(times, compute_rsi(closes, 14))
         elif ind == "macd":
-            macd_line, sig_line, hist = compute_macd(closes)
-            result_indicators["macd_line"] = _format_series(times, macd_line)
-            result_indicators["macd_signal"] = _format_series(times, sig_line)
-            result_indicators["macd_histogram"] = _format_series(times, hist)
+            ml, sl, h = compute_macd(closes)
+            result["macd_line"] = _fmt(times, ml)
+            result["macd_signal"] = _fmt(times, sl)
+            result["macd_histogram"] = _fmt(times, h)
         elif ind == "bb":
-            upper, middle, lower = bollinger_bands(closes)
-            result_indicators["bb_upper"] = _format_series(times, upper)
-            result_indicators["bb_middle"] = _format_series(times, middle)
-            result_indicators["bb_lower"] = _format_series(times, lower)
+            u, m, l = bollinger_bands(closes)
+            result["bb_upper"] = _fmt(times, u)
+            result["bb_middle"] = _fmt(times, m)
+            result["bb_lower"] = _fmt(times, l)
         elif ind == "atr":
-            vals = compute_atr(highs, lows, closes, 14)
-            result_indicators["atr_14"] = _format_series(times, vals)
+            result["atr_14"] = _fmt(times, compute_atr(highs, lows, closes, 14))
         elif ind == "volume":
-            result_indicators["volume"] = _format_series_volume(times, volumes)
+            result["volume"] = [{"time": t, "value": v} for t, v in zip(times, volumes)]
 
-    result_indicators["__close"] = _format_series(times, closes)
-    return {"symbol": symbol, "indicators": result_indicators}
+    result["__close"] = _fmt(times, closes)
+    return {"symbol": symbol, "indicators": result}
 
 
-def _format_series(times, values):
+def _fmt(times, values):
     return [{"time": t, "value": round(v, 2) if v is not None else None} for t, v in zip(times, values) if v is not None]
-
-
-def _format_series_volume(times, values):
-    return [{"time": t, "value": v} for t, v in zip(times, values)]
