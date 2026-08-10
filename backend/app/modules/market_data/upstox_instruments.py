@@ -24,6 +24,10 @@ UPSTOX_INSTRUMENTS = [
      "instrument_key": "NSE_EQ|INE397D01024", "exchange": "NSE", "lot_size": 1},
     {"symbol": "AXISBANK", "name": "Axis Bank Ltd", "sector": "Banking",
      "instrument_key": "NSE_EQ|INE238A01034", "exchange": "NSE", "lot_size": 1},
+    {"symbol": "TATAMOTORS", "name": "Tata Motors Ltd", "sector": "Automobile",
+     "instrument_key": "NSE_EQ|INE155A01022", "exchange": "NSE", "lot_size": 1},
+    {"symbol": "HINDUNILVR", "name": "Hindustan Unilever Ltd", "sector": "FMCG",
+     "instrument_key": "NSE_EQ|INE030A01027", "exchange": "NSE", "lot_size": 1},
 ]
 
 SYMBOL_TO_KEY = {i["symbol"]: i["instrument_key"] for i in UPSTOX_INSTRUMENTS}

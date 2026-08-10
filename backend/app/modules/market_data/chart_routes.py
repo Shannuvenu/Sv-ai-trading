@@ -76,10 +76,17 @@ def get_candles(
     if not provider or not provider._configured:
         raise HTTPException(503, "Market data provider unavailable")
 
+    # Common symbol aliases for Indian stocks
     instrument_key = provider._resolve_key(symbol)
     if not instrument_key:
         inst_client = get_instrument_client()
         inst = inst_client.get_instrument_by_symbol(symbol, "NSE")
+        if inst and inst.get("instrument_key"):
+            instrument_key = inst["instrument_key"]
+    # Additional fallback: try BSE
+    if not instrument_key:
+        inst_client = get_instrument_client()
+        inst = inst_client.get_instrument_by_symbol(symbol, "BSE")
         if inst and inst.get("instrument_key"):
             instrument_key = inst["instrument_key"]
     if not instrument_key:
