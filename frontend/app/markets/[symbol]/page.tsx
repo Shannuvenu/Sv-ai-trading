@@ -1,7 +1,7 @@
 "use client";
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Search, TrendingUp, TrendingDown, Minus, Star, Bell, ArrowLeft, NewspaperIcon, ExternalLink } from "lucide-react";
+import { Search, TrendingUp, TrendingDown, Minus, Star, Bell, ArrowLeft, NewspaperIcon, ExternalLink, Maximize } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import type { Quote, NewsArticle, NewsListResponse } from "@/types";
@@ -56,6 +56,7 @@ function StockContent() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <a href={`/chart/${quote.symbol}`} className="text-xs bg-primary/20 text-primary border border-primary/30 rounded-full px-3 py-1 font-medium hover:bg-primary/30 flex items-center gap-1"><Maximize size={12} />Full Chart</a>
           <span className="text-xs bg-surface border border-border rounded-full px-3 py-1 text-muted">MARKET CLOSED · UPSTOX</span>
         </div>
       </div>
