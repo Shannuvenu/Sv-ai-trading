@@ -26,9 +26,11 @@ export default function ChartPage() {
   const renderChart = useCallback((raw: any[]) => {
     const canvas = canvasRef.current;
     const box = containerRef.current;
+    console.log("[CHART RENDER] canvas:", !!canvas, "box:", !!box, "candles:", raw?.length);
     if (!canvas || !box) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    console.log("[CHART RENDER] canvas w:", box.clientWidth, "h:", box.clientHeight);
 
     const W = box.clientWidth;
     const H = box.clientHeight;
@@ -41,6 +43,7 @@ export default function ChartPage() {
 
     const candles = raw.map(c => ({ t: new Date(c.time).getTime() / 1000, o: +c.open, h: +c.high, l: +c.low, c: +c.close, v: +c.volume }));
     const n = candles.length;
+    console.log("[CHART RENDER] parsed", n, "candles, first:", candles[0]?.t, candles[n-1]?.t);
     if (n === 0) return;
 
     const padLeft = 60, padRight = 20, padTop = 20, padBottom = 30;
@@ -133,9 +136,11 @@ export default function ChartPage() {
 
   const fetchAndDraw = useCallback(async (sym: string, intv: string) => {
     setState("load"); setErr(""); setInfo(`Loading ${sym} ${intv}...`);
+    console.log("[CHART FETCH] start", sym, intv);
     try {
       const H = hdr();
       const days = ["1D","1W","1M"].includes(intv) ? 365 : 7;
+      console.log("[CHART FETCH] URL:", `/api/chart/${sym}/candles?interval=${intv}&days=${days}`);
       // Fetch quote
       const qr = await fetch(`/api/chart/${sym}/quote`, { headers: H, signal: AbortSignal.timeout(5000) });
       if (qr.ok) {
@@ -151,8 +156,10 @@ export default function ChartPage() {
         setErr(`No data for ${sym} at ${intv}`);
         setState("err"); return;
       }
-      renderChart(raw);
+      console.log("[CHART FETCH] candles:", raw.length);
       setState("ok");
+      // renderChart needs DOM to exist — wait for next frame
+      requestAnimationFrame(() => { renderChart(raw); });
     } catch (e: any) {
       setErr(e.name === "TimeoutError" ? "Request timed out" : (e.message || "Failed to load chart"));
       setState("err");
