@@ -32,21 +32,29 @@ export default function ChartPage() {
   const loadAndRender = useCallback(async (sym: string, intv: string) => {
     setStatus("loading"); setErrMsg("");
     const container = containerRef.current;
-    if (!container) return;
+    if (!container) { setErrMsg("Chart container not ready"); setStatus("error"); return; }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const days = ["1D","1W","1M"].includes(intv) ? 365 : 7;
       const H = hdr();
+      console.log("[CHART] Fetching", sym, intv, "days:", days);
 
-      // Fetch quote
-      fetch(`/api/chart/${sym}/quote`, { headers: H }).then(r => r.json()).then(q => {
-        if (q) setQuoteStr(`${sym} NSE  \u20B9${q.last_price?.toFixed(2)}  ${q.change >= 0 ? "+" : ""}${q.change?.toFixed(2)} (${q.change_pct?.toFixed(2)}%) | O:${q.open?.toFixed(2)} H:${q.high?.toFixed(2)} L:${q.low?.toFixed(2)} Vol:${q.volume?.toLocaleString("en-IN")}`);
-      }).catch(() => {});
+      // Fetch quote (fire-and-forget)
+      fetch(`/api/chart/${sym}/quote`, { headers: H, signal: controller.signal })
+        .then(r => r.ok ? r.json() : null)
+        .then(q => {
+          if (q) setQuoteStr(`${sym} NSE  \u20B9${q.last_price?.toFixed(2)}  ${q.change >= 0 ? "+" : ""}${q.change?.toFixed(2)} (${q.change_pct?.toFixed(2)}%)`);
+        }).catch(e => { if (e.name !== "AbortError") console.error("quote fetch:", e); });
 
       // Fetch candles
-      const r = await fetch(`/api/chart/${sym}/candles?interval=${intv}&days=${days}`, { headers: H });
+      const r = await fetch(`/api/chart/${sym}/candles?interval=${intv}&days=${days}`, { headers: H, signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!r.ok) throw new Error(`API ${r.status}`);
       const d = await r.json();
+      console.log("[CHART] Response:", sym, "candles:", d.total);
       const raw = d.candles || [];
       if (!Array.isArray(raw) || raw.length === 0) {
         setErrMsg(`No data: ${sym} @ ${intv} returned ${raw.length} candles`);
@@ -110,7 +118,9 @@ export default function ChartPage() {
 
       setStatus("ready");
     } catch (e: any) {
-      setErrMsg(e.message || "Unknown error");
+      clearTimeout(timeoutId);
+      const msg = e.name === "AbortError" ? "Request timed out (15s). Check API." : (e.message || "Unknown error");
+      setErrMsg(msg);
       setStatus("error");
     }
   }, [hdr]);
