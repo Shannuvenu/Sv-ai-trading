@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Search, TrendingUp, TrendingDown, Minus, Star, Bell, ArrowLeft, NewspaperIcon, ExternalLink, Maximize } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { apiFetch } from "@/lib/apiClient";
 import type { Quote, NewsArticle, NewsListResponse } from "@/types";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -25,7 +26,7 @@ function StockContent() {
       const [q, h, s, n] = await Promise.all([
         api.getQuote(sym).catch(() => null),
         api.getHistory(sym).catch(() => ({ data: [] })),
-        fetch(`/api/analysis/technical-summary/${sym}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        apiFetch(`/analysis/technical-summary/${sym}`).then(r => r.ok ? r.json() : null).catch(() => null),
         api.getCompanyNews(sym, 1, 10).catch(() => null),
       ]);
       setQuote(q);

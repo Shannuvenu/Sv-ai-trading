@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { apiFetch } from "@/lib/apiClient";
 
 export default function CalculatorsPage() {
   const [active, setActive] = useState("sip");
@@ -39,7 +40,7 @@ function SIPCalc() {
   const [m, setM] = useState("5000"); const [y, setY] = useState("10"); const [r, setR] = useState("12");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/sip?monthly=${m}&years=${y}&rate=${r}`);
+    const resp = await apiFetch(`/calculators/sip?monthly=${m}&years=${y}&rate=${r}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Monthly Investment (₹)" value={m} onChange={setM} /><Field label="Years" value={y} onChange={setY} /><Field label="Expected Return (%)" value={r} onChange={setR} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <Result data={res} />}</div>;
@@ -49,7 +50,7 @@ function LumpsumCalc() {
   const [p, setP] = useState("100000"); const [y, setY] = useState("10"); const [r, setR] = useState("10");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/lumpsum?principal=${p}&years=${y}&rate=${r}`);
+    const resp = await apiFetch(`/calculators/lumpsum?principal=${p}&years=${y}&rate=${r}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Principal (₹)" value={p} onChange={setP} /><Field label="Years" value={y} onChange={setY} /><Field label="Return Rate (%)" value={r} onChange={setR} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <Result data={res} />}</div>;
@@ -59,7 +60,7 @@ function CAGRCalc() {
   const [i, setI] = useState("100000"); const [f, setF] = useState("250000"); const [y, setY] = useState("5");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/cagr?initial=${i}&final=${f}&years=${y}`);
+    const resp = await apiFetch(`/calculators/cagr?initial=${i}&final=${f}&years=${y}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Initial Value (₹)" value={i} onChange={setI} /><Field label="Final Value (₹)" value={f} onChange={setF} /><Field label="Years" value={y} onChange={setY} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <div className="mt-4 space-y-2 pt-4 border-t border-border">{Object.entries(res).map(([k,v])=>(<div key={k} className="flex justify-between text-sm"><span className="text-muted capitalize">{k.replace(/_/g," ")}</span><span className="font-medium tabular-nums">{k==="cagr"?v.toFixed(2)+"%":v.toFixed(2)+"%"}</span></div>))}</div>}</div>;
@@ -69,7 +70,7 @@ function EMICalc() {
   const [p, setP] = useState("1000000"); const [y, setY] = useState("20"); const [r, setR] = useState("8.5");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/emi?principal=${p}&years=${y}&rate=${r}`);
+    const resp = await apiFetch(`/calculators/emi?principal=${p}&years=${y}&rate=${r}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Loan Amount (₹)" value={p} onChange={setP} /><Field label="Tenure (Years)" value={y} onChange={setY} /><Field label="Interest Rate (%)" value={r} onChange={setR} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <div className="mt-4 space-y-2 pt-4 border-t border-border"><div className="text-center"><p className="text-xs text-muted">Monthly EMI</p><p className="text-2xl font-bold text-primary tabular-nums">₹{res.emi.toLocaleString("en-IN")}</p></div><Result data={res} /></div>}</div>;
@@ -79,7 +80,7 @@ function CompoundCalc() {
   const [p, setP] = useState("100000"); const [y, setY] = useState("10"); const [r, setR] = useState("8"); const [c, setC] = useState("1");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/compound?principal=${p}&years=${y}&rate=${r}&compounding=${c}`);
+    const resp = await apiFetch(`/calculators/compound?principal=${p}&years=${y}&rate=${r}&compounding=${c}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Principal (₹)" value={p} onChange={setP} /><Field label="Years" value={y} onChange={setY} /><Field label="Rate (%)" value={r} onChange={setR} /><Field label="Compounding/year" value={c} onChange={setC} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <Result data={res} />}</div>;
@@ -89,7 +90,7 @@ function FDCalc() {
   const [p, setP] = useState("100000"); const [y, setY] = useState("5"); const [r, setR] = useState("7");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/fd?principal=${p}&years=${y}&rate=${r}`);
+    const resp = await apiFetch(`/calculators/fd?principal=${p}&years=${y}&rate=${r}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Deposit Amount (₹)" value={p} onChange={setP} /><Field label="Years" value={y} onChange={setY} /><Field label="Interest Rate (%)" value={r} onChange={setR} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <Result data={res} />}</div>;
@@ -99,7 +100,7 @@ function RDCalc() {
   const [m, setM] = useState("5000"); const [mo, setMo] = useState("60"); const [r, setR] = useState("7");
   const [res, setRes] = useState<Record<string,number>|null>(null);
   const calc = async () => {
-    const resp = await fetch(`/api/calculators/rd?monthly=${m}&months=${mo}&rate=${r}`);
+    const resp = await apiFetch(`/calculators/rd?monthly=${m}&months=${mo}&rate=${r}`);
     const d = await resp.json(); setRes(d.result);
   };
   return <div><Field label="Monthly Deposit (₹)" value={m} onChange={setM} /><Field label="Months" value={mo} onChange={setMo} /><Field label="Interest Rate (%)" value={r} onChange={setR} /><button onClick={calc} className="w-full py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium">Calculate</button>{res && <Result data={res} />}</div>;

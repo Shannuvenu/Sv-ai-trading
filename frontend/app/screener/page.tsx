@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { Filter, ArrowUpDown, Search, TrendingUp, TrendingDown } from "lucide-react";
 import { api } from "@/lib/api";
+import { apiFetch } from "@/lib/apiClient";
 
 interface QuoteRow { symbol: string; name: string; last_price: number; change: number; change_pct: number; volume: number; }
 
@@ -29,13 +30,9 @@ export default function ScreenerPage() {
       const batchSize = 25;
       const batch1 = liquid.slice(0, batchSize);
       const batch2 = liquid.slice(batchSize);
-      const r1 = await fetch(`/api/market/batch-quotes?symbols=${batch1.join(",")}&exchange=NSE`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` }
-      });
+      const r1 = await apiFetch(`/market/batch-quotes?symbols=${batch1.join(",")}&exchange=NSE`);
       const d1 = await r1.json();
-      const r2 = await fetch(`/api/market/batch-quotes?symbols=${batch2.join(",")}&exchange=NSE`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` }
-      });
+      const r2 = await apiFetch(`/market/batch-quotes?symbols=${batch2.join(",")}&exchange=NSE`);
       const d2 = await r2.json();
       const quotes = { ...(d1.quotes || {}), ...(d2.quotes || {}) };
       const rows: QuoteRow[] = liquid.map(s => ({

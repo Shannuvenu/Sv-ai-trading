@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { apiFetch } from "@/lib/apiClient";
 
 interface TickerItem {
   symbol: string;
@@ -18,7 +19,7 @@ export default function MarketTicker() {
   useEffect(() => {
     async function fetchIndices() {
       try {
-        const res = await fetch("/api/market/indices");
+        const res = await apiFetch("/market/indices");
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0 && data[0].last_price > 0) {
           setItems(data.slice(0, 6));

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { apiFetch } from "@/lib/apiClient";
 import { TrendingUp, Wallet, Star, CircleDollarSign, Bot, Activity, Brain, Newspaper, AlertTriangle, ArrowRight, Briefcase } from "lucide-react";
 import Link from "next/link";
 import type { PortfolioSummary, Watchlist, Quote, NewsArticle } from "@/types";
@@ -34,7 +35,7 @@ export default function DashboardPage() {
 
         // Indices
         try {
-          const idxRes = await fetch("/api/market/indices");
+          const idxRes = await apiFetch("/market/indices");
           const idxData = await idxRes.json();
           if (cancelled) return;
           if (Array.isArray(idxData) && idxData.length > 0 && idxData[0].last_price > 0) {

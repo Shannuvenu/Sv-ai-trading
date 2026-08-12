@@ -1,6 +1,11 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { Activity, Zap, Shield, AlertTriangle, Brain, TrendingUp, TrendingDown, XCircle, CheckCircle, Wallet, BarChart3, History, DollarSign } from "lucide-react";
+import { apiFetch } from "@/lib/apiClient";
+
+function rfetch(url: string, opt: RequestInit = {}) {
+  return apiFetch(url, opt);
+}
 
 const STRATEGIES = [
   { name: "Momentum Breakout", key: "momentum", desc: "MACD + RSI + SMA20" },
@@ -16,11 +21,6 @@ interface ScanResult { symbol: string; last_price: number; strategies: Record<st
 interface AIResult { symbol: string; decision: string; confidence: number; summary: string; strategy: string; entry: number; stop_loss: number; take_profit: number; position_size: number; risk_reward: number; time_horizon: string; reasoning: string; technical_reasons: string[]; fundamental_reasons: string[]; news_reasons: string[]; risks: string[]; is_fallback: boolean; last_price: number; }
 interface Decision { id: number; symbol: string; direction: string; decision: string; ltp: number; quantity: number; entry_price: number; stop_loss: number; take_profit: number; reasoning: string; risk_score: number; timestamp: string; }
 interface Position { symbol: string; quantity: number; average_price: number; ltp: number; invested: number; market_value: number; pnl: number; pnl_pct: number; }
-
-function rfetch(url: string, opt: RequestInit = {}) {
-  const t = localStorage.getItem("access_token") || "";
-  return fetch(url, { ...opt, headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}), ...((opt.headers as any) || {}) } });
-}
 
 export default function AITraderPage() {
   const [tab, setTab] = useState<"scanner"|"analysis"|"positions"|"history">("scanner");

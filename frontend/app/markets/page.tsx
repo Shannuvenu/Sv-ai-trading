@@ -3,6 +3,7 @@ import { Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { Search, TrendingUp, TrendingDown, Star, ArrowRight, ChevronRight, Filter } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { apiFetch } from "@/lib/apiClient";
 
 interface InstrumentResult {
   trading_symbol: string;
@@ -38,9 +39,7 @@ export default function MarketsPage() {
     if (q.length < 2) { setResults([]); return; }
     setLoading(true); setError("");
     try {
-      const res = await fetch(`/api/market/search?q=${encodeURIComponent(q)}&exchange=${activeTab.toUpperCase()}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` }
-      });
+      const res = await apiFetch(`/market/search?q=${encodeURIComponent(q)}&exchange=${activeTab.toUpperCase()}`);
       const data = await res.json();
       setResults(data.results || []);
     } catch (e: any) { setError(e.message); }
@@ -51,9 +50,7 @@ export default function MarketsPage() {
     if (q.length < 1) { setFoResults([]); return; }
     setLoading(true);
     try {
-      const res = await fetch(`/api/market/fo/search?underlying=${encodeURIComponent(q)}&instrument_type=${foType}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` }
-      });
+      const res = await apiFetch(`/market/fo/search?underlying=${encodeURIComponent(q)}&instrument_type=${foType}`);
       const data = await res.json();
       setFoResults(data.results || []);
     } catch {}
@@ -72,19 +69,16 @@ export default function MarketsPage() {
 
   useEffect(() => {
     // Load indices
-    fetch("/api/market/indices", { headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` } })
-      .then(r => r.json()).then(d => { if (Array.isArray(d)) setIndices(d); }).catch(() => {});
+    apiFetch("/market/indices").then(r => r.json()).then(d => { if (Array.isArray(d)) setIndices(d); }).catch(() => {});
     // Load movers
     Promise.all([
-      fetch("/api/market/top-movers?category=gainers&limit=10", { headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` } }).then(r => r.json()),
-      fetch("/api/market/top-movers?category=losers&limit=10", { headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` } }).then(r => r.json()),
+      apiFetch("/market/top-movers?category=gainers&limit=10").then(r => r.json()),
+      apiFetch("/market/top-movers?category=losers&limit=10").then(r => r.json()),
     ]).then(([g, l]) => { setTopMovers(g.results || []); setTopLosers(l.results || []); }).catch(() => {});
     // Load IPOs
-    fetch("/api/market/ipo", { headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` } })
-      .then(r => r.json()).then(d => { if (d.ipos) setIpos(d.ipos); }).catch(() => {});
+    apiFetch("/market/ipo").then(r => r.json()).then(d => { if (d.ipos) setIpos(d.ipos); }).catch(() => {});
     // Load MTF
-    fetch("/api/market/mtf", { headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` } })
-      .then(r => r.json()).then(d => { setMtfStocks(d.results || []); }).catch(() => {});
+    apiFetch("/market/mtf").then(r => r.json()).then(d => { setMtfStocks(d.results || []); }).catch(() => {});
   }, []);
 
   const presets = ["RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK","SBIN","ITC","LT","BHARTIARTL","KOTAKBANK"];

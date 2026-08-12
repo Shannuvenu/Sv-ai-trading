@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, Component } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { SquareCode, Newspaper, ShoppingCart, Play, X, RefreshCw, ChevronLeft, Maximize } from "lucide-react";
 import { api } from "@/lib/api";
+import { apiFetch } from "@/lib/apiClient";
 
 const INTERVALS = ["1m","3m","5m","15m","30m","1h","4h","1D","1W","1M"];
 const STOCKS = ["RELIANCE","TCS","INFY","HDFCBANK","ICICIBANK","SBIN","ITC","LT","BHARTIARTL","AXISBANK","KOTAKBANK","TATAMOTORS","HINDUNILVR","EICHERMOT","TATASTEEL","M&M","BAJFINANCE","MARUTI","TITAN","SUNPHARMA"];
@@ -164,13 +165,13 @@ export default function ChartPage() {
       const days = ["1D","1W","1M"].includes(intv) ? 365 : 7;
 
       // Fetch quote (fire-and-forget, non-blocking)
-      fetch(`/api/chart/${sym}/quote`, { headers: H, signal: ctrl.signal })
+      apiFetch(`/chart/${sym}/quote`, { headers: H, signal: ctrl.signal })
         .then(r => r.ok ? r.json() : null)
         .then(q => { if (q) setInfo(`${sym} NSE ${fmtPrice(q.last_price)} ${q.change>=0?"+":""}${q.change?.toFixed(2)} (${q.change_pct?.toFixed(2)}%)`); })
         .catch(() => {});
 
       // Fetch candles
-      const cr = await fetch(`/api/chart/${sym}/candles?interval=${intv}&days=${days}`, { headers: H, signal: ctrl.signal });
+      const cr = await apiFetch(`/chart/${sym}/candles?interval=${intv}&days=${days}`, { headers: H, signal: ctrl.signal });
       if (!cr.ok) throw new Error(`API ${cr.status}`);
       const cd = await cr.json();
       const raw: CandleData[] = cd.candles || [];
@@ -229,7 +230,7 @@ export default function ChartPage() {
   // News
   const [showNews, setNews] = useState(false);
   const [newsData, setNewsData] = useState<any>(null);
-  useEffect(() => { if (!showNews) return; fetch(`/api/news/company/${symbol}?page=1&page_size=10`, { headers: hdr() }).then(r => r.json()).then(d => setNewsData(d)).catch(() => {}); }, [showNews, symbol, hdr]);
+  useEffect(() => { if (!showNews) return; apiFetch(`/news/company/${symbol}?page=1&page_size=10`, { headers: hdr() }).then(r => r.json()).then(d => setNewsData(d)).catch(() => {}); }, [showNews, symbol, hdr]);
 
   // Paper Trade
   const [showTrade, setTrade] = useState(false);
