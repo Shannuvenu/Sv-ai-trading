@@ -5,20 +5,25 @@ import re
 from typing import Optional
 from decimal import Decimal
 
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-
 from app.core.config import get_settings
 
 settings = get_settings()
 logger = logging.getLogger("gemini_service")
 
-SAFETY_SETTINGS = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-}
+# Lazy import google-genai so backend startup never crashes if the SDK
+# is not installed or the key is missing.
+_genai = None
+
+def _get_genai():
+    global _genai
+    if _genai is None:
+        try:
+            from google import genai as _g
+            _genai = _g
+        except ImportError:
+            _genai = False
+    return _genai
+
 
 SYSTEM_PROMPT = """You are a professional financial market analyst for the Indian stock market (NSE/BSE).
 You receive structured market data, technical indicators, news sentiment, and portfolio context.
@@ -63,18 +68,27 @@ class GeminiService:
         self._configured = bool(self._api_key)
         if not self._configured:
             logger.warning("GEMINI_API_KEY not set — AI intelligence will be unavailable.")
-            self._model = None
+            self._client = None
         else:
-            genai.configure(api_key=self._api_key)
-            self._model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                system_instruction=SYSTEM_PROMPT,
-                safety_settings=SAFETY_SETTINGS,
-            )
+            genai = _get_genai()
+            if not genai:
+                logger.warning("google-genai SDK not installed — AI intelligence will be unavailable.")
+                self._client = None
+                self._configured = False
+            else:
+                self._client = genai.Client(api_key=self._api_key)
 
     @property
     def is_configured(self) -> bool:
         return self._configured
+
+    def _generate(self, prompt: str) -> str:
+        """Call the current google-genai SDK. Returns raw text or raises."""
+        response = self._client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=SYSTEM_PROMPT + "\n\n" + prompt,
+        )
+        return response.text
 
     def analyze(
         self,
@@ -123,9 +137,7 @@ PORTFOLIO CONTEXT:
 Provide ONLY the JSON response, no other text."""
 
         try:
-            response = self._model.generate_content(prompt)
-            raw = response.text.strip()
-            # Strip markdown code fences if present
+            raw = self._generate(prompt).strip()
             raw = re.sub(r'^```(?:json)?\s*\n?', '', raw)
             raw = re.sub(r'\n?```\s*$', '', raw)
             result = json.loads(raw)
@@ -166,12 +178,10 @@ Return ONLY a JSON:
 {{"recommended": "strategy_name", "confidence": 0-100, "reasoning": "why"}}"""
 
         try:
-            response = self._model.generate_content(prompt)
-            raw = response.text.strip()
+            raw = self._generate(prompt).strip()
             raw = re.sub(r'^```(?:json)?\s*\n?', '', raw)
             raw = re.sub(r'\n?```\s*$', '', raw)
-            result = json.loads(raw)
-            return result
+            return json.loads(raw)
         except Exception as e:
             logger.error(f"Gemini strategy analysis failed: {e}")
             return {"recommended": "momentum", "confidence": 50, "reasoning": "Default (analysis failed)"}
@@ -190,8 +200,7 @@ Return ONLY JSON:
 {{"sentiment": "BULLISH" | "BEARISH" | "NEUTRAL", "summary": "2-3 sentence summary", "impact_score": -10 to +10, "key_themes": ["theme1", "theme2"]}}"""
 
         try:
-            response = self._model.generate_content(prompt)
-            raw = response.text.strip()
+            raw = self._generate(prompt).strip()
             raw = re.sub(r'^```(?:json)?\s*\n?', '', raw)
             raw = re.sub(r'\n?```\s*$', '', raw)
             return json.loads(raw)
