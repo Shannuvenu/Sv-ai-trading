@@ -24,6 +24,7 @@ from app.modules.market_data.fundamentals_routes import router as fundamentals_r
 from app.modules.market_data.extended_routes import router as market_extended_router
 from app.modules.market_data.chart_routes import router as chart_router
 from app.modules.market_data.pine_routes import router as pine_router
+from app.modules.market_data.backtest_routes import router as backtest_pine_router
 from scripts.seed import seed_all
 
 settings = get_settings()
@@ -57,6 +58,7 @@ app.include_router(fundamentals_router)
 app.include_router(market_extended_router)
 app.include_router(chart_router)
 app.include_router(pine_router)
+app.include_router(backtest_pine_router)
 
 
 def _start_upstox_ws():
