@@ -5,7 +5,7 @@ def test_list_instruments():
     resp = client.get("/market/instruments")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 10
+    assert len(data) == 12
     symbols = {i["symbol"] for i in data}
     assert "RELIANCE" in symbols
     assert "TCS" in symbols
