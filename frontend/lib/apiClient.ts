@@ -5,8 +5,7 @@ export function getApiBase(): string {
     // Check if running on Vercel production
     const host = window.location.host;
     if (host.includes("vercel.app")) {
-      // Vercel production — use deployed backend
-      return process.env.NEXT_PUBLIC_API_URL || "https://sv-ai-trading-api.onrender.com";
+      return process.env.NEXT_PUBLIC_API_URL || "https://sv-ai-trading-backend.onrender.com";
     }
     // Local development — proxy through nginx on port 80
     return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
