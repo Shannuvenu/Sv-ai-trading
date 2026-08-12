@@ -24,9 +24,35 @@ router = APIRouter(prefix="/ai-trader", tags=["AI Trader"])
 @router.get("/config")
 def get_config(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     cfg = db.query(AITraderConfig).filter(AITraderConfig.user_id == user.id).first()
-    if not cfg:
-        return {"is_active": False, "risk_profile": "MODERATE", "trading_mode": "PAPER"}
-    return cfg
+    # Auto-create default portfolio if none exists
+    portfolio_id = cfg.portfolio_id if cfg else None
+    portfolio = None
+    if portfolio_id:
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id, Portfolio.user_id == user.id).first()
+    if not portfolio:
+        # Find or create a default paper portfolio
+        pf = db.query(Portfolio).filter(Portfolio.user_id == user.id, Portfolio.is_paper == True).first()
+        if not pf:
+            pf = Portfolio(user_id=user.id, name="SV AI Paper Portfolio", initial_cash=100000, cash_balance=100000, is_paper=True)
+            db.add(pf)
+            db.flush()
+        portfolio = pf
+        if not cfg:
+            cfg = AITraderConfig(user_id=user.id, portfolio_id=pf.id)
+            db.add(cfg)
+        else:
+            cfg.portfolio_id = pf.id
+        db.commit()
+        db.refresh(cfg)
+    return {
+        "is_active": cfg.is_active if cfg else True,
+        "risk_profile": cfg.risk_profile if cfg else "MODERATE",
+        "trading_mode": "PAPER",
+        "portfolio_id": portfolio.id,
+        "portfolio_name": portfolio.name,
+        "cash_balance": float(portfolio.cash_balance),
+        "equity": float(portfolio.cash_balance),
+    }
 
 
 @router.put("/config")
@@ -130,118 +156,88 @@ def execute_trade(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Execute a paper trade through the AI trader (same BUY/SELL as manual)."""
+    """Execute a paper trade through the AI trader."""
     symbol = payload["symbol"].upper()
-    direction = payload["direction"]  # BUY or SELL
+    direction = payload["direction"]
     strategy_name = payload.get("strategy", "")
     reasoning = payload.get("reasoning", "")
+    qty = int(payload.get("quantity", 1))
+    price = float(payload.get("price", 0))
 
+    # Validate inputs
+    if direction not in ("BUY", "SELL"):
+        raise HTTPException(400, f"Invalid direction: {direction}")
+    if qty <= 0:
+        raise HTTPException(400, "Quantity must be positive")
+    if price <= 0:
+        raise HTTPException(400, "Price must be positive")
+
+    # Get or create config + portfolio
     cfg = db.query(AITraderConfig).filter(AITraderConfig.user_id == user.id).first()
-    if not cfg or not cfg.portfolio_id:
-        raise HTTPException(400, "AI Trader not configured. Create a portfolio first.")
-
-    portfolio = db.query(Portfolio).filter(
-        Portfolio.id == cfg.portfolio_id, Portfolio.user_id == user.id
-    ).first()
+    portfolio = None
+    if cfg and cfg.portfolio_id:
+        portfolio = db.query(Portfolio).filter(Portfolio.id == cfg.portfolio_id, Portfolio.user_id == user.id).first()
     if not portfolio:
-        raise HTTPException(404, "Portfolio not found")
+        pf = db.query(Portfolio).filter(Portfolio.user_id == user.id, Portfolio.is_paper == True).first()
+        if not pf:
+            pf = Portfolio(user_id=user.id, name="SV AI Paper Portfolio", initial_cash=100000, cash_balance=100000, is_paper=True)
+            db.add(pf)
+            db.flush()
+        portfolio = pf
+        if not cfg:
+            cfg = AITraderConfig(user_id=user.id, portfolio_id=pf.id)
+            db.add(cfg)
+        else:
+            cfg.portfolio_id = pf.id
+        db.commit()
+        db.refresh(cfg)
 
+    # Get market price
     provider = resolve_market_provider(db)
     quote = provider.get_quote(symbol)
     if not quote:
         raise HTTPException(404, f"Instrument {symbol} not found")
-
     ltp = float(quote.close)
-
-    # Log the decision
-    strategy_id = None
-    if strategy_name:
-        strat = db.query(Strategy).filter(Strategy.name == strategy_name).first()
-        if strat:
-            strategy_id = strat.id
-
-    decision = TradeDecision(
-        user_id=user.id,
-        symbol=symbol,
-        direction=direction,
-        decision="APPROVED",
-        strategy_id=strategy_id,
-        ltp=ltp,
-        reasoning=reasoning,
-        market_regime="CLOSED",
-        risk_score=payload.get("risk_score"),
-    )
+    if price <= 0:
+        price = ltp
 
     if direction == "BUY":
-        qty = int(payload.get("quantity", 1))
-        price = float(payload.get("price", ltp))
-        total_value = price * qty
-        if portfolio.cash_balance < Decimal(str(total_value)):
-            decision.decision = "REJECTED"
-            decision.rejection_reason = "Insufficient cash"
-            db.add(decision)
-            db.commit()
-            return {"decision": "REJECTED", "reason": "Insufficient cash"}
-
-        portfolio.cash_balance -= Decimal(str(total_value))
-        txn = Transaction(
-            portfolio_id=portfolio.id, symbol=symbol, side=TransactionSide.BUY,
-            quantity=qty, price=Decimal(str(price)), total_value=Decimal(str(total_value)),
-        )
+        total = price * qty
+        if float(portfolio.cash_balance) < total:
+            raise HTTPException(400, f"Insufficient cash. Need \u20B9{total:,.2f}, have \u20B9{float(portfolio.cash_balance):,.2f}")
+        portfolio.cash_balance -= Decimal(str(total))
+        txn = Transaction(portfolio_id=portfolio.id, symbol=symbol, side=TransactionSide.BUY, quantity=qty, price=Decimal(str(price)), total_value=Decimal(str(total)))
         db.add(txn)
         db.flush()
-        decision.transaction_id = txn.id
-
-        holding = db.query(Holding).filter(
-            Holding.portfolio_id == portfolio.id, Holding.symbol == symbol
-        ).first()
+        holding = db.query(Holding).filter(Holding.portfolio_id == portfolio.id, Holding.symbol == symbol).first()
         if holding:
-            total_cost = (holding.average_price * holding.quantity) + Decimal(str(total_value))
+            total_cost = (holding.average_price * holding.quantity) + Decimal(str(total))
             holding.average_price = total_cost / (holding.quantity + qty)
             holding.quantity += qty
         else:
-            db.add(Holding(
-                portfolio_id=portfolio.id, symbol=symbol,
-                quantity=qty, average_price=Decimal(str(price)),
-            ))
-
+            db.add(Holding(portfolio_id=portfolio.id, symbol=symbol, quantity=qty, average_price=Decimal(str(price))))
+        decision = TradeDecision(user_id=user.id, symbol=symbol, direction=direction, decision="EXECUTED",
+            ltp=ltp, quantity=qty, entry_price=price, reasoning=reasoning,
+            risk_score=payload.get("risk_score"), transaction_id=txn.id)
     elif direction == "SELL":
-        holding = db.query(Holding).filter(
-            Holding.portfolio_id == portfolio.id, Holding.symbol == symbol
-        ).first()
-        qty = int(payload.get("quantity", 0))
+        holding = db.query(Holding).filter(Holding.portfolio_id == portfolio.id, Holding.symbol == symbol).first()
         if not holding or holding.quantity < qty:
-            decision.decision = "REJECTED"
-            decision.rejection_reason = "Insufficient holdings"
-            db.add(decision)
-            db.commit()
-            return {"decision": "REJECTED", "reason": "Insufficient holdings"}
-
-        price = float(payload.get("price", ltp))
-        total_value = price * qty
+            raise HTTPException(400, f"Insufficient holdings. Have {holding.quantity if holding else 0}, tried to sell {qty}")
+        total = price * qty
         holding.quantity -= qty
-        portfolio.cash_balance += Decimal(str(total_value))
-        txn = Transaction(
-            portfolio_id=portfolio.id, symbol=symbol, side=TransactionSide.SELL,
-            quantity=qty, price=Decimal(str(price)), total_value=Decimal(str(total_value)),
-        )
+        portfolio.cash_balance += Decimal(str(total))
+        txn = Transaction(portfolio_id=portfolio.id, symbol=symbol, side=TransactionSide.SELL, quantity=qty, price=Decimal(str(price)), total_value=Decimal(str(total)))
         db.add(txn)
         db.flush()
-        decision.transaction_id = txn.id
         if holding.quantity == 0:
             db.delete(holding)
+        decision = TradeDecision(user_id=user.id, symbol=symbol, direction=direction, decision="EXECUTED",
+            ltp=ltp, quantity=qty, entry_price=price, reasoning=reasoning,
+            risk_score=payload.get("risk_score"), transaction_id=txn.id)
 
-    decision.decision = "EXECUTED"
     db.add(decision)
     db.commit()
-    return {
-        "decision": "EXECUTED",
-        "symbol": symbol,
-        "direction": direction,
-        "quantity": qty,
-        "price": price,
-        "transaction_id": decision.transaction_id,
-    }
+    return {"decision": "EXECUTED", "symbol": symbol, "direction": direction, "quantity": qty, "price": price, "transaction_id": txn.id}
 
 
 @router.get("/decisions")
