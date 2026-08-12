@@ -2,9 +2,19 @@
 Backtest engine — runs Pine strategies against historical OHLCV.
 No future-data look-ahead. Uses existing Pine interpreter.
 Produces reproducible trade metrics.
+
+CORRECTNESS RULES:
+- Entry: BUY signal on candle[i] → execute on same candle's close
+- Exit: SELL signal on candle[i] → execute on same candle's close
+- Stop Loss: checked EVERY candle against candle.low. If low <= SL, exit at SL price.
+- Take Profit: checked EVERY candle against candle.high. If high >= TP, exit at TP price.
+- Same-candle SL+TP: stop-loss wins (conservative — assume worst case first)
+- Commission: charged on both entry (cost * rate) and exit (proceeds * rate)
+- Position sizing: max_trade_value = capital * position_size_pct / 100, qty = floor(max_trade_value / price)
 """
 import logging
 import math
+import statistics
 from datetime import datetime, timezone
 from app.modules.market_data.pine_interpreter import PineInterpreter
 
@@ -30,141 +40,175 @@ def run_backtest(
     if n < 50:
         return {"error": "Insufficient data (need 50+ candles)", "trades": [], "metrics": {}}
 
-    # Step 1: Run Pine interpreter to get signals
     interpreter = PineInterpreter(ohlc)
     result = interpreter.execute(script)
     if result.errors:
         return {"error": result.errors[0], "trades": [], "metrics": {}}
 
-    # Step 2: Extract buy/sell signals from shapes
-    shapes = result.shapes  # each shape has .data with {time, value: bool} per candle
+    shapes = result.shapes
     if not shapes:
         return {"error": "No plotshape() signals found in script", "trades": [], "metrics": {}}
 
-    # Normalize: find all buy signals and sell signals
     times = ohlc["time"]
     closes = ohlc["close"]
     highs = ohlc["high"]
     lows = ohlc["low"]
-    opens_raw = ohlc["open"]
 
+    # Extract buy/sell signal indices from Pine output
     buy_indices = set()
     sell_indices = set()
     for shape in shapes:
+        title = (shape.get("title") or "").lower()
         for i, pt in enumerate(shape.get("data", [])):
             if pt.get("value"):
-                title = (shape.get("title") or "").lower()
                 if "buy" in title or "long" in title or "entry" in title:
                     buy_indices.add(i)
                 elif "sell" in title or "short" in title or "exit" in title:
                     sell_indices.add(i)
                 else:
-                    buy_indices.add(i)  # default: first shape = buy
+                    buy_indices.add(i)  # default first shape = buy
 
-    all_signal_indices = sorted(buy_indices | sell_indices)
-    if not all_signal_indices:
+    if not buy_indices and not sell_indices:
         return {"error": "No buy/sell signals generated", "trades": [], "metrics": {}}
 
-    # Step 3: Simulate trades chronologically
+    # Run chronological simulation
     capital = initial_capital
-    position = 0  # 0 = flat, 1 = holding
+    position = 0
     entry_price = 0
+    entry_fees = 0
+    sl_price = 0
+    tp_price = 0
     trades = []
     equity_curve = []
 
     for i in range(n):
-        equity_curve.append({
-            "time": times[i],
-            "equity": capital + (position * closes[i] if position > 0 else 0),
-        })
+        curr_close = closes[i]
+        curr_high = highs[i]
+        curr_low = lows[i]
 
-        if i not in buy_indices and i not in sell_indices:
-            continue
-        if i not in all_signal_indices:
-            continue
+        # Track equity
+        pos_value = position * curr_close if position > 0 else 0
+        equity_curve.append({"time": times[i], "equity": capital + pos_value})
 
-        is_buy = i in buy_indices
-        is_sell = i in sell_indices
+        # Check stop-loss and take-profit on EVERY candle while holding
+        if position > 0:
+            sl_hit = sl_price > 0 and curr_low <= sl_price
+            tp_hit = tp_price > 0 and curr_high >= tp_price
 
-        if is_buy and position == 0:
-            # Execute buy
-            price = closes[i]  # buy at close
-            trade_capital = capital * (position_size_pct / 100)
-            qty = int(trade_capital / price)
+            if sl_hit and tp_hit:
+                # Conservative rule: stop-loss wins in same-candle scenario
+                exit_price = sl_price
+                exit_reason = "STOP_LOSS"
+            elif sl_hit:
+                exit_price = sl_price
+                exit_reason = "STOP_LOSS"
+            elif tp_hit:
+                exit_price = tp_price
+                exit_reason = "TAKE_PROFIT"
+            else:
+                exit_price = None
+                exit_reason = None
+
+            if exit_price is not None:
+                proceeds = position * exit_price
+                exit_comm = proceeds * (commission_pct / 100)
+                capital += (proceeds - exit_comm)
+                gross_pnl = (exit_price - entry_price) * position
+                net_pnl = gross_pnl - entry_fees - exit_comm
+                trades[-1].update({
+                    "exit_time": times[i],
+                    "exit_price": round(exit_price, 2),
+                    "exit_fees": round(exit_comm, 2),
+                    "total_fees": round(entry_fees + exit_comm, 2),
+                    "gross_pnl": round(gross_pnl, 2),
+                    "net_pnl": round(net_pnl, 2),
+                    "return_pct": round((exit_price - entry_price) / entry_price * 100, 2) if entry_price > 0 else 0,
+                    "exit_reason": exit_reason,
+                })
+                position = 0
+                entry_price = 0
+                entry_fees = 0
+                sl_price = 0
+                tp_price = 0
+
+        # Check Pine signals (only if flat or opposite direction)
+        if i in buy_indices and position == 0:
+            price = curr_close
+            max_trade = capital * (position_size_pct / 100)
+            qty = int(max_trade / price)
             if qty <= 0:
                 continue
             cost = qty * price
-            commission = cost * (commission_pct / 100)
-            capital -= (cost + commission)
+            comm = cost * (commission_pct / 100)
+            capital -= (cost + comm)
             position = qty
             entry_price = price
-            sl = entry_price * (1 - stop_loss_pct / 100)
-            tp = entry_price * (1 + take_profit_pct / 100)
+            entry_fees = comm
+            sl_price = price * (1 - stop_loss_pct / 100)
+            tp_price = price * (1 + take_profit_pct / 100)
             trades.append({
                 "id": len(trades) + 1,
-                "symbol": "N/A",
                 "side": "BUY",
                 "entry_time": times[i],
                 "entry_price": round(price, 2),
                 "quantity": qty,
-                "stop_loss": round(sl, 2),
-                "take_profit": round(tp, 2),
-                "fees": round(commission, 2),
+                "stop_loss": round(sl_price, 2),
+                "take_profit": round(tp_price, 2),
+                "entry_fees": round(comm, 2),
             })
 
-        elif is_sell and position > 0:
-            # Execute sell
-            price = closes[i]
+        elif i in sell_indices and position > 0:
+            price = curr_close
             proceeds = position * price
-            commission = proceeds * (commission_pct / 100)
-            capital += (proceeds - commission)
-            pnl = (price - entry_price) * position
-            net_pnl = pnl - commission
-            return_pct = ((price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+            exit_comm = proceeds * (commission_pct / 100)
+            capital += (proceeds - exit_comm)
+            gross_pnl = (price - entry_price) * position
+            net_pnl = gross_pnl - entry_fees - exit_comm
             trades[-1].update({
                 "exit_time": times[i],
                 "exit_price": round(price, 2),
-                "gross_pnl": round(pnl, 2),
-                "fees": round(commission, 2),
+                "exit_fees": round(exit_comm, 2),
+                "total_fees": round(entry_fees + exit_comm, 2),
+                "gross_pnl": round(gross_pnl, 2),
                 "net_pnl": round(net_pnl, 2),
-                "return_pct": round(return_pct, 2),
+                "return_pct": round((price - entry_price) / entry_price * 100, 2) if entry_price > 0 else 0,
                 "exit_reason": "SIGNAL",
             })
             position = 0
             entry_price = 0
+            entry_fees = 0
+            sl_price = 0
+            tp_price = 0
 
-    # Close any remaining open position at last price
+    # Close remaining position at last candle close
     if position > 0:
         last_price = closes[-1]
         proceeds = position * last_price
-        commission = proceeds * (commission_pct / 100)
-        capital += (proceeds - commission)
-        pnl = (last_price - entry_price) * position
-        net_pnl = pnl - commission
+        exit_comm = proceeds * (commission_pct / 100)
+        capital += (proceeds - exit_comm)
+        gross_pnl = (last_price - entry_price) * position
+        net_pnl = gross_pnl - entry_fees - exit_comm
         trades[-1].update({
             "exit_time": times[-1],
             "exit_price": round(last_price, 2),
-            "gross_pnl": round(pnl, 2),
-            "fees": round(commission, 2),
+            "exit_fees": round(exit_comm, 2),
+            "total_fees": round(entry_fees + exit_comm, 2),
+            "gross_pnl": round(gross_pnl, 2),
             "net_pnl": round(net_pnl, 2),
-            "return_pct": round(((last_price - entry_price) / entry_price * 100), 2) if entry_price > 0 else 0,
+            "return_pct": round((last_price - entry_price) / entry_price * 100, 2) if entry_price > 0 else 0,
             "exit_reason": "END_OF_DATA",
         })
 
     # Metrics
-    final_capital = capital
-    net_pnl = final_capital - initial_capital
-    total_return_pct = (net_pnl / initial_capital * 100) if initial_capital > 0 else 0
     completed_trades = [t for t in trades if "exit_price" in t]
     winning = [t for t in completed_trades if t["net_pnl"] > 0]
     losing = [t for t in completed_trades if t["net_pnl"] <= 0]
     total_trades = len(completed_trades) or 1
-    win_rate = len(winning) / total_trades * 100 if total_trades > 0 else 0
+
     gross_profit = sum(t["net_pnl"] for t in winning) if winning else 0
     gross_loss = abs(sum(t["net_pnl"] for t in losing)) if losing else 0
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (999 if gross_profit > 0 else 0)
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (None if gross_profit == 0 else None)
 
-    # Max drawdown
     peak = initial_capital
     max_dd = 0.0
     for eq in equity_curve:
@@ -174,37 +218,35 @@ def run_backtest(
         if dd > max_dd:
             max_dd = dd
 
-    # Sharpe
-    import statistics
-    daily_returns = []
-    for i in range(1, len(equity_curve)):
-        prev = equity_curve[i - 1]["equity"]
-        curr = equity_curve[i]["equity"]
+    returns = []
+    for j in range(1, len(equity_curve)):
+        prev = equity_curve[j - 1]["equity"]
+        curr = equity_curve[j]["equity"]
         if prev > 0:
-            daily_returns.append((curr - prev) / prev)
+            returns.append((curr - prev) / prev)
     sharpe = None
-    if len(daily_returns) > 10:
-        avg = statistics.mean(daily_returns)
-        std = statistics.stdev(daily_returns)
+    if len(returns) > 10:
+        avg = statistics.mean(returns)
+        std = statistics.stdev(returns)
         if std > 0:
             sharpe = round((avg * math.sqrt(252)) / std, 3)
 
     return {
         "symbol": "N/A",
         "timeframe": "N/A",
-        "initial_capital": initial_capital,
-        "final_capital": round(final_capital, 2),
-        "net_pnl": round(net_pnl, 2),
-        "total_return_pct": round(total_return_pct, 2),
+        "initial_capital": round(initial_capital, 2),
+        "final_capital": round(capital, 2),
+        "net_pnl": round(capital - initial_capital, 2),
+        "total_return_pct": round((capital - initial_capital) / initial_capital * 100, 2) if initial_capital > 0 else 0,
         "total_trades": len(completed_trades),
         "winning_trades": len(winning),
         "losing_trades": len(losing),
-        "win_rate": round(win_rate, 1),
+        "win_rate": round(len(winning) / total_trades * 100, 1) if total_trades > 0 else 0,
         "avg_win": round(sum(t["net_pnl"] for t in winning) / len(winning), 2) if winning else 0,
         "avg_loss": round(sum(t["net_pnl"] for t in losing) / len(losing), 2) if losing else 0,
         "largest_win": round(max((t["net_pnl"] for t in completed_trades), default=0), 2),
         "largest_loss": round(min((t["net_pnl"] for t in completed_trades), default=0), 2),
-        "profit_factor": round(profit_factor, 2) if profit_factor < 999 else None,
+        "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
         "max_drawdown_pct": round(max_dd, 2),
         "sharpe_ratio": sharpe,
         "trades": trades,
