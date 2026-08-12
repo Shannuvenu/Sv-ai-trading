@@ -167,16 +167,19 @@ class PineInterpreter:
             return node.n
         if isinstance(node, ast.Name):
             name = node.id
-            if name in BANNED_FUNCTIONS:
-                raise PineError(f"Function '{name}' is not allowed")
+            # Check user vars, built-in series, and our functions FIRST
+            # before checking banned functions — 'open', 'close' are both
+            # OHLC series AND Python builtins that happen to be on our banned list.
             if name in self._user_vars:
                 return self._user_vars[name]
-            if name in self._vars:
+            if name in self._vars:          # OHLC series: open, high, low, close, volume, hl2, hlc3, ohlc4
                 return self._vars[name]
+            if name in self._functions:     # pine built-ins: sma, ema, rsi, plot, etc.
+                return self._functions[name]
             if name in SAFE_FUNCTIONS:
                 return SAFE_FUNCTIONS[name]
-            if name in self._functions:
-                return self._functions[name]
+            if name in BANNED_FUNCTIONS:
+                raise PineError(f"Function '{name}' is not allowed")
             raise PineError(f"Unknown variable: {name}")
         if isinstance(node, ast.List):
             return [self._eval(elt) for elt in node.elts]
